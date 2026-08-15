@@ -4,6 +4,10 @@ set -Eeuo pipefail
 # shellcheck disable=SC1090,SC1091
 source "${OPENCLAW_LIB:-/usr/libexec/openclaw-appliance/lib.sh}"
 
+CREDENTIAL_HELPER="${OPENCLAW_CREDENTIAL_HELPER:-$(dirname "${OPENCLAW_LIB:-/usr/libexec/openclaw-appliance/lib.sh}")/gateway-credential.sh}"
+# shellcheck disable=SC1090
+source "$CREDENTIAL_HELPER"
+
 ROOT_PREFIX="${OPENCLAW_ROOT:-}"
 [[ "$ROOT_PREFIX" == "/" ]] && ROOT_PREFIX=""
 
@@ -34,7 +38,6 @@ Commands:
 USAGE
 }
 
-
 COMMANDS_DIR="${OPENCLAW_APPLIANCE_COMMANDS_DIR:-$(dirname "${OPENCLAW_LIB:-/usr/libexec/openclaw-appliance/lib.sh}")/commands}"
 for module in \
   status-sandbox.sh \
@@ -47,9 +50,18 @@ for module in \
   source "$COMMANDS_DIR/$module"
 done
 
+load_command_credential() {
+  case "$1" in
+    status|sandbox|access|backup|audit|update|rollback)
+      openclaw_load_gateway_credential_if_present
+      ;;
+  esac
+}
+
 main() {
   local command="${1:-help}"
   shift || true
+  load_command_credential "$command"
   case "$command" in
     status) command_status "$@" ;;
     setup) command_setup "$@" ;;

@@ -3,7 +3,7 @@ ROOT := $(CURDIR)
 VERSION := $(shell cat VERSION)
 ARCH ?= amd64
 
-.PHONY: validate verify-artifacts test iso smoke clean run tree
+.PHONY: validate verify-artifacts test test-control-plane iso smoke clean run tree
 
 validate:
 	./scripts/validate.sh
@@ -13,6 +13,10 @@ verify-artifacts:
 
 test:
 	./tests/appliance-test.sh
+	./scripts/test-control-plane.sh
+
+test-control-plane:
+	./scripts/test-control-plane.sh
 
 iso: validate verify-artifacts
 	sudo ./scripts/build-image.sh $(ARCH)
@@ -23,7 +27,7 @@ smoke:
 
 clean:
 	@if command -v lb >/dev/null 2>&1; then cd image && sudo lb clean --purge || true; fi
-	rm -rf dist image/.build image/.cache
+	rm -rf dist image/.build image/.cache image/config/includes.chroot/usr/lib/openclaw-os/control-plane
 
 run:
 	@test -f dist/openclaw-os-$(VERSION)-$(ARCH).iso || { echo "ISO not found. Run make iso first." >&2; exit 1; }

@@ -9,7 +9,23 @@ on:
     paths:
       - '.github/workflows/build-iso.yml'
       - 'VERSION'
+      - 'package.json'
       - 'Makefile'
+      - 'config/**'
+      - 'packages/**'
+      - 'services/**'
+      - 'image/**'
+      - 'scripts/**'
+      - 'tests/**'
+  pull_request:
+    paths:
+      - '.github/workflows/build-iso.yml'
+      - 'VERSION'
+      - 'package.json'
+      - 'Makefile'
+      - 'config/**'
+      - 'packages/**'
+      - 'services/**'
       - 'image/**'
       - 'scripts/**'
       - 'tests/**'
@@ -48,6 +64,18 @@ jobs:
                 mtools dosfstools \
                 ca-certificates curl jq git make openssl xz-utils shellcheck nftables
               git config --global --add safe.directory /work
+
+              source image/config/includes.chroot/usr/share/openclaw-os/release.env
+              node_archive="node-v${NODE_VERSION}-linux-x64.tar.xz"
+              curl --proto "=https" --tlsv1.2 --fail --location --silent --show-error \
+                "https://nodejs.org/dist/v${NODE_VERSION}/${node_archive}" \
+                --output "/tmp/${node_archive}"
+              printf "%s  %s\n" "$NODE_SHA256_AMD64" "/tmp/${node_archive}" \
+                | sha256sum --check --status
+              tar -xJf "/tmp/${node_archive}" -C /opt
+              export PATH="/opt/node-v${NODE_VERSION}-linux-x64/bin:$PATH"
+              test "$(node --version)" = "v${NODE_VERSION}"
+
               make validate
               make verify-artifacts
               ./scripts/build-image.sh amd64

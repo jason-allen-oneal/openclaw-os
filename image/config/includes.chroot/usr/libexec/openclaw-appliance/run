@@ -2,4 +2,7 @@
 set -Eeuo pipefail
 # shellcheck disable=SC1091
 source /usr/libexec/openclaw-appliance/lib.sh
+# shellcheck disable=SC1091
+source /usr/libexec/openclaw-appliance/gateway-credential.sh
+openclaw_load_gateway_credential_if_present
 run_openclaw "$@"

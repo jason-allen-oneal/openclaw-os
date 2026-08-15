@@ -9,6 +9,8 @@ namespace_uuid="$(cat /proc/sys/kernel/random/uuid)"
 packages_file="$(mktemp)"
 trap 'rm -f "$packages_file"' EXIT
 
+control_plane_package=/usr/lib/openclaw-os/control-plane/package.json
+control_plane_version="$(jq -er '.version | select(type == "string" and length > 0)' "$control_plane_package")"
 dpkg-query -W -f='${binary:Package}\t${Version}\t${Architecture}\n' | sort >"$packages_file"
 
 jq -Rn \
@@ -17,6 +19,7 @@ jq -Rn \
   --arg os_version "$OPENCLAW_OS_VERSION" \
   --arg node_version "$NODE_VERSION" \
   --arg openclaw_version "$OPENCLAW_VERSION" \
+  --arg control_plane_version "$control_plane_version" \
   --slurpfile build /usr/share/openclaw-os/build-info.json \
   '
   [inputs | split("\t") | {
@@ -76,10 +79,19 @@ jq -Rn \
         licenseConcluded: "MIT",
         licenseDeclared: "MIT",
         supplier: "Organization: OpenClaw"
+      }, {
+        SPDXID: "SPDXRef-OpenClawOSControlPlane",
+        name: "openclaw-os-control-plane",
+        versionInfo: $control_plane_version,
+        downloadLocation: "NOASSERTION",
+        filesAnalyzed: false,
+        licenseConcluded: "MIT",
+        licenseDeclared: "MIT"
       }] + $debian_packages),
       relationships: ([
         {spdxElementId: "SPDXRef-OpenClawOS", relationshipType: "CONTAINS", relatedSpdxElement: "SPDXRef-NodeJS"},
-        {spdxElementId: "SPDXRef-OpenClawOS", relationshipType: "CONTAINS", relatedSpdxElement: "SPDXRef-OpenClaw"}
+        {spdxElementId: "SPDXRef-OpenClawOS", relationshipType: "CONTAINS", relatedSpdxElement: "SPDXRef-OpenClaw"},
+        {spdxElementId: "SPDXRef-OpenClawOS", relationshipType: "CONTAINS", relatedSpdxElement: "SPDXRef-OpenClawOSControlPlane"}
       ] + ($debian_packages | map({
         spdxElementId: "SPDXRef-OpenClawOS",
         relationshipType: "CONTAINS",
@@ -95,5 +107,5 @@ jq -Rn \
   ' "$packages_file" >/usr/share/openclaw-os/sbom.spdx.json
 
 chmod 0644 /usr/share/openclaw-os/sbom.spdx.json
-jq -e '.spdxVersion == "SPDX-2.3" and (.packages | length > 3)' \
+jq -e '.spdxVersion == "SPDX-2.3" and (.packages | any(.SPDXID == "SPDXRef-OpenClawOSControlPlane"))' \
   /usr/share/openclaw-os/sbom.spdx.json >/dev/null

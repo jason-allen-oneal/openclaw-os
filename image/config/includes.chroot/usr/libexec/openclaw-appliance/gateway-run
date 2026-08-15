@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+credential_directory="${CREDENTIALS_DIRECTORY:-}"
+[[ -n "$credential_directory" && "$credential_directory" == /* ]] || {
+  echo "OpenClaw Gateway credential directory is unavailable" >&2
+  exit 78
+}
+credential_file="$credential_directory/gateway-token"
+[[ -f "$credential_file" && ! -L "$credential_file" ]] || {
+  echo "OpenClaw Gateway credential is unavailable" >&2
+  exit 78
+}
+credential_mode="$(stat -c '%a' "$credential_file" 2>/dev/null || true)"
+[[ "$credential_mode" =~ ^[0-7]{3,4}$ ]] || {
+  echo "OpenClaw Gateway credential is invalid" >&2
+  exit 78
+}
+(( (8#$credential_mode & 077) == 0 )) || {
+  echo "OpenClaw Gateway credential permissions are too broad" >&2
+  exit 78
+}
+credential_size="$(stat -c '%s' "$credential_file" 2>/dev/null || true)"
+[[ "$credential_size" =~ ^[0-9]+$ ]] && ((credential_size >= 16 && credential_size <= 4097)) || {
+  echo "OpenClaw Gateway credential is invalid" >&2
+  exit 78
+}
+
+mapfile -t credential_lines <"$credential_file"
+if ((${#credential_lines[@]} != 1)); then
+  echo "OpenClaw Gateway credential is invalid" >&2
+  exit 78
+fi
+OPENCLAW_GATEWAY_TOKEN="${credential_lines[0]}"
+if ! LC_ALL=C [[ "$OPENCLAW_GATEWAY_TOKEN" =~ ^[!-~]{16,4096}$ ]]; then
+  echo "OpenClaw Gateway credential is invalid" >&2
+  exit 78
+fi
+export OPENCLAW_GATEWAY_TOKEN
+
+exec /opt/openclaw/current/bin/openclaw gateway run

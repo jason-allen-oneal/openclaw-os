@@ -8,6 +8,7 @@
 /image/*.packages
 /image/*.zsync
 /image/*.hybrid.iso
+/image/config/includes.chroot/usr/lib/openclaw-os/control-plane/
 dist/
 *.log
 *.tmp

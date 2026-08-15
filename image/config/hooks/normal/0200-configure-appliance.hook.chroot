@@ -7,6 +7,9 @@ source /usr/share/openclaw-os/release.env
 if ! getent group openclaw >/dev/null; then
   groupadd --system openclaw
 fi
+if ! getent group openclaw-control >/dev/null; then
+  groupadd --system openclaw-control
+fi
 if ! id openclaw >/dev/null 2>&1; then
   useradd \
     --system \
@@ -16,6 +19,26 @@ if ! id openclaw >/dev/null 2>&1; then
     --shell /usr/sbin/nologin \
     --comment "OpenClaw appliance service" \
     openclaw
+fi
+if ! id openclaw-hostd >/dev/null 2>&1; then
+  useradd \
+    --system \
+    --gid openclaw-control \
+    --no-create-home \
+    --home-dir /nonexistent \
+    --shell /usr/sbin/nologin \
+    --comment "OpenClaw OS host status service" \
+    openclaw-hostd
+fi
+if ! id openclaw-controller >/dev/null 2>&1; then
+  useradd \
+    --system \
+    --gid openclaw-control \
+    --no-create-home \
+    --home-dir /nonexistent \
+    --shell /usr/sbin/nologin \
+    --comment "OpenClaw OS controller service" \
+    openclaw-controller
 fi
 
 if ! grep -q '^openclaw:' /etc/subuid; then
@@ -93,10 +116,12 @@ chmod 0755 \
   /usr/local/sbin/openclaw-appliance \
   /usr/local/sbin/openclaw-console \
   /usr/libexec/openclaw-appliance/run \
+  /usr/libexec/openclaw-appliance/gateway-run \
+  /usr/libexec/openclaw-appliance/gateway-credential.sh \
   /usr/libexec/openclaw-appliance/lib.sh \
   /usr/libexec/openclaw-appliance/preflight
 chmod 0600 /etc/openclaw/appliance.conf
-chmod 0644 /etc/openclaw/appliance.env
+chmod 0644 /etc/openclaw/appliance.env /etc/openclaw/controller.env
 
 OPENCLAW_ROOT=/ /usr/local/sbin/openclaw-appliance firewall render --no-apply
 
@@ -107,6 +132,8 @@ systemctl enable auditd.service || true
 systemctl enable unattended-upgrades.service || true
 systemctl enable systemd-timesyncd.service || true
 systemctl enable openclaw.service
+systemctl enable openclaw-hostd.service
+systemctl enable openclaw-controller.service
 systemctl enable openclaw-boot-marker.service
 systemctl enable openclaw-console.service
 systemctl enable openclaw-backup.timer

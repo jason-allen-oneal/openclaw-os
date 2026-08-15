@@ -99,12 +99,43 @@ command_ssh() {
   esac
 }
 
+write_controller_environment() {
+  local port temporary
+  port="$(oc_get gateway.port 18789)"
+  validate_port "$port"
+  temporary="$(mktemp /etc/openclaw/controller.env.XXXXXX)"
+  if ! printf 'OPENCLAW_CONTROLLER_GATEWAY_URL=ws://127.0.0.1:%s\n' "$port" >"$temporary" \
+    || ! chown root:root "$temporary" \
+    || ! chmod 0644 "$temporary" \
+    || ! mv -T "$temporary" /etc/openclaw/controller.env; then
+    rm -f "$temporary"
+    die "Could not write controller Gateway endpoint"
+  fi
+}
+
+wait_for_controller_health() {
+  local attempts="${1:-20}"
+  local response
+  local i
+  for ((i = 1; i <= attempts; i++)); do
+    if response="$(curl --fail --silent --show-error --max-time 2 \
+      http://127.0.0.1:9080/healthz 2>/dev/null)" \
+      && jq -e '.ok == true and .service == "openclaw-controller"' \
+        >/dev/null 2>&1 <<<"$response"; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 command_setup() {
   require_root
   [[ -t 0 && -t 1 ]] || die "Setup requires an interactive terminal"
   ensure_runtime_directory
-  systemctl stop openclaw.service >/dev/null 2>&1 || true
+  systemctl stop openclaw-controller.service openclaw.service >/dev/null 2>&1 || true
 
+  openclaw_ensure_gateway_credential || die "Could not create or load the Gateway credential"
   sandbox_build
 
   log "Starting OpenClaw onboarding"
@@ -114,7 +145,9 @@ command_setup() {
     --flow advanced \
     --gateway-bind loopback \
     --gateway-auth token \
+    --gateway-token-ref-env OPENCLAW_GATEWAY_TOKEN \
     --secret-input-mode ref \
+    --suppress-gateway-token-output \
     --skip-daemon \
     --skip-skills \
     --skip-health
@@ -123,12 +156,20 @@ command_setup() {
   run_openclaw config validate
   chown openclaw:openclaw "$OPENCLAW_CONFIG_FILE"
   chmod 0600 "$OPENCLAW_CONFIG_FILE"
+  write_controller_environment
 
-  systemctl enable openclaw.service >/dev/null
+  systemctl enable openclaw.service openclaw-hostd.service openclaw-controller.service >/dev/null
   systemctl restart openclaw.service
   if ! wait_for_gateway_health 45; then
     systemctl status openclaw.service --no-pager || true
     die "Gateway did not become healthy after setup"
+  fi
+
+  systemctl restart openclaw-hostd.service
+  systemctl restart openclaw-controller.service
+  if ! wait_for_controller_health 20; then
+    systemctl status openclaw-hostd.service openclaw-controller.service --no-pager || true
+    die "OpenClaw OS controller did not become healthy after setup"
   fi
 
   touch /var/lib/openclaw/.appliance-initialized
@@ -142,12 +183,16 @@ command_setup() {
   cat <<'DONE'
 OpenClaw setup completed.
 
-The Gateway is bound to loopback. Use one of these methods to reach the Control UI:
+The Gateway and the OpenClaw OS controller are bound to loopback. Use one of
+these methods to reach the OpenClaw Control UI:
 
   sudo openclaw-appliance access lan
   SSH local port forwarding after enabling key-only SSH
 
+The read-only appliance controller is available locally at:
+
+  http://127.0.0.1:9080/api/v1/status
+
 Run `sudo openclaw-appliance status` for current health and addresses.
 DONE
 }
-

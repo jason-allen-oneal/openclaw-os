@@ -66,7 +66,7 @@ $lan_elements
     ct state invalid drop
     ct state established,related accept
     ip protocol icmp accept
-    ip6 nexthdr ipv6-icmp accept
+    ip6 nexthdr 58 accept
     udp sport 67 udp dport 68 accept
     udp sport 547 udp dport 546 accept
     tcp dport @allowed_tcp_ports ct state new accept

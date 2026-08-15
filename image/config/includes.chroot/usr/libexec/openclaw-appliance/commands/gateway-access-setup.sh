@@ -63,8 +63,8 @@ command_access() {
 }
 
 has_authorized_key() {
-  local username uid home
-  while IFS=: read -r username _ uid _ _ home _; do
+  local _username uid home
+  while IFS=: read -r _username _ uid _ _ home _; do
     [[ "$uid" =~ ^[0-9]+$ ]] || continue
     ((uid >= 1000 && uid < 60000)) || continue
     if [[ -s "$home/.ssh/authorized_keys" ]]; then

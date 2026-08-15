@@ -146,7 +146,7 @@ command_firewall() {
   shift || true
   case "$action" in
     render)
-      require_root
+      [[ -n "$ROOT_PREFIX" ]] || require_root
       firewall_render "${1:-}"
       ;;
     allow|deny|allow-lan|deny-lan)

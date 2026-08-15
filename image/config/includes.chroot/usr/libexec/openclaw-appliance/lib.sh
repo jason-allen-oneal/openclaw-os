@@ -34,10 +34,15 @@ load_release_env() {
 }
 
 load_appliance_config() {
+  # These settings are consumed by separately sourced appliance command modules.
+  # shellcheck disable=SC2034
   BACKUP_RETENTION_DAYS=30
+  # shellcheck disable=SC2034
   BACKUP_INCLUDE_WORKSPACE=yes
+  # shellcheck disable=SC2034
   UPDATE_CHANNEL=extended-stable
   HEALTH_TIMEOUT_MS=15000
+  # shellcheck disable=SC2034
   KEEP_OPENCLAW_RELEASES=3
   if [[ -r "$APPLIANCE_CONFIG_FILE" ]]; then
     # shellcheck disable=SC1090

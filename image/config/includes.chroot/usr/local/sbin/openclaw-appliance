@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# shellcheck disable=SC1091
+# shellcheck disable=SC1090,SC1091
 source "${OPENCLAW_LIB:-/usr/libexec/openclaw-appliance/lib.sh}"
 
 ROOT_PREFIX="${OPENCLAW_ROOT:-}"

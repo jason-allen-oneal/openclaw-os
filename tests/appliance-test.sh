@@ -46,6 +46,7 @@ if (verify_sri "$TEST_ROOT/sri-input" 'sha512-V3Jvbmc=') >/dev/null 2>&1; then
   die "Incorrect SRI was accepted"
 fi
 
+# shellcheck disable=SC2016
 release_body='- npm integrity: `sha512-VGVzdA==`
 - Release commit: [`0123456789abcdef0123456789abcdef01234567`](https://example.invalid)'
 [[ "$(extract_release_integrity <<<"$release_body")" == "sha512-VGVzdA==" ]] || die "Release SRI extraction failed"

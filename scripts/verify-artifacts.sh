@@ -37,7 +37,7 @@ printf '%s  %s\n' "$node_sha256" "$node_path" | sha256sum --check --status
 
 tar -xJf "$node_path" -C "$work_dir" "node-v${NODE_VERSION}-linux-${node_arch}/bin/node"
 if [[ "$ARCH" == "amd64" && "$(uname -m)" == "x86_64" ]]; then
-  actual_node="$($work_dir/node-v${NODE_VERSION}-linux-${node_arch}/bin/node --version)"
+  actual_node="$("$work_dir/node-v${NODE_VERSION}-linux-${node_arch}/bin/node" --version)"
   [[ "$actual_node" == "v$NODE_VERSION" ]] || die "Node archive reported $actual_node"
 fi
 

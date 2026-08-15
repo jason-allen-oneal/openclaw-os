@@ -46,7 +46,7 @@ jobs:
                 live-build debootstrap xorriso squashfs-tools \
                 grub-pc-bin grub-efi-amd64-bin isolinux syslinux-common syslinux-utils \
                 mtools dosfstools \
-                ca-certificates curl jq git openssl xz-utils shellcheck nftables
+                ca-certificates curl jq git make openssl xz-utils shellcheck nftables
               git config --global --add safe.directory /work
               make validate
               make verify-artifacts

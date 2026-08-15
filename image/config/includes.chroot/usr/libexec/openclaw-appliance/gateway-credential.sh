@@ -20,7 +20,8 @@ openclaw_load_gateway_credential() {
   mapfile -t lines <"$file"
   ((${#lines[@]} == 1)) || return 1
   local token="${lines[0]}"
-  LC_ALL=C [[ "$token" =~ ^[!-~]{16,4096}$ ]] || return 1
+  local LC_ALL=C
+  [[ "$token" =~ ^[!-~]{16,4096}$ ]] || return 1
 
   OPENCLAW_GATEWAY_TOKEN="$token"
   export OPENCLAW_GATEWAY_TOKEN

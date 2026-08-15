@@ -80,7 +80,15 @@ if command -v shellcheck >/dev/null 2>&1; then
     "$ROOT_DIR/image/config/includes.chroot/usr/local/bin" \
     "$ROOT_DIR/image/config/includes.chroot/usr/local/sbin" \
     "$ROOT_DIR/image/config/includes.chroot/usr/libexec/openclaw-appliance" \
-    -type f -print0)
+    -type f \( \
+      -name '*.sh' \
+      -o -path '*/auto/config' \
+      -o -path '*/auto/clean' \
+      -o -path '*/hooks/normal/*.hook.chroot' \
+      -o -path '*/usr/local/bin/*' \
+      -o -path '*/usr/local/sbin/*' \
+      -o -path '*/usr/libexec/openclaw-appliance/*' \
+    \) -print0)
   if ! shellcheck -x -e SC1091,SC2154,SC2317,SC2329 "${shell_files[@]}"; then
     fail "shellcheck reported errors"
   fi
@@ -229,7 +237,15 @@ done < <(find \
   "$ROOT_DIR/image/config/includes.chroot/usr/local/bin" \
   "$ROOT_DIR/image/config/includes.chroot/usr/local/sbin" \
   "$ROOT_DIR/image/config/includes.chroot/usr/libexec/openclaw-appliance" \
-  -type f -print0)
+  -type f \( \
+    -name '*.sh' \
+    -o -path '*/auto/config' \
+    -o -path '*/auto/clean' \
+    -o -path '*/hooks/normal/*.hook.chroot' \
+    -o -path '*/usr/local/bin/*' \
+    -o -path '*/usr/local/sbin/*' \
+    -o -path '*/usr/libexec/openclaw-appliance/*' \
+  \) -print0)
 
 note "staging control-plane source"
 stage_root="$(mktemp -d)"

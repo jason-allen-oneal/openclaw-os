@@ -21,18 +21,24 @@ credential_mode="$(stat -c '%a' "$credential_file" 2>/dev/null || true)"
   exit 78
 }
 credential_size="$(stat -c '%s' "$credential_file" 2>/dev/null || true)"
-[[ "$credential_size" =~ ^[0-9]+$ ]] && ((credential_size >= 16 && credential_size <= 4097)) || {
+if [[ ! "$credential_size" =~ ^[0-9]+$ ]] \
+  || ((credential_size < 16 || credential_size > 4097)); then
   echo "OpenClaw Gateway credential is invalid" >&2
   exit 78
-}
+fi
 
 mapfile -t credential_lines <"$credential_file"
 if ((${#credential_lines[@]} != 1)); then
   echo "OpenClaw Gateway credential is invalid" >&2
   exit 78
 fi
+credential_is_printable_ascii() {
+  local LC_ALL=C
+  [[ "$1" =~ ^[!-~]{16,4096}$ ]]
+}
+
 OPENCLAW_GATEWAY_TOKEN="${credential_lines[0]}"
-if ! LC_ALL=C [[ "$OPENCLAW_GATEWAY_TOKEN" =~ ^[!-~]{16,4096}$ ]]; then
+if ! credential_is_printable_ascii "$OPENCLAW_GATEWAY_TOKEN"; then
   echo "OpenClaw Gateway credential is invalid" >&2
   exit 78
 fi

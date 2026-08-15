@@ -1,0 +1,117 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+# shellcheck disable=SC1091
+source /usr/share/openclaw-os/release.env
+
+if ! getent group openclaw >/dev/null; then
+  groupadd --system openclaw
+fi
+if ! id openclaw >/dev/null 2>&1; then
+  useradd \
+    --system \
+    --gid openclaw \
+    --create-home \
+    --home-dir /var/lib/openclaw \
+    --shell /usr/sbin/nologin \
+    --comment "OpenClaw appliance service" \
+    openclaw
+fi
+
+if ! grep -q '^openclaw:' /etc/subuid; then
+  printf 'openclaw:100000:65536\n' >>/etc/subuid
+fi
+if ! grep -q '^openclaw:' /etc/subgid; then
+  printf 'openclaw:100000:65536\n' >>/etc/subgid
+fi
+
+install -d -m 0755 /etc/openclaw
+install -d -m 0700 -o openclaw -g openclaw \
+  /var/lib/openclaw/state \
+  /var/lib/openclaw/backups \
+  /var/lib/openclaw/containers \
+  /var/lib/openclaw/.config/containers \
+  /var/lib/openclaw/.local/share/containers \
+  /var/log/openclaw \
+  /var/log/openclaw/audits
+install -d -m 0750 -o openclaw -g openclaw \
+  /srv/openclaw \
+  /srv/openclaw/workspaces \
+  /srv/openclaw/workspaces/main
+install -d -m 0755 /opt/node/releases /opt/openclaw/releases
+
+cat >/var/lib/openclaw/.config/containers/storage.conf <<'CONF'
+[storage]
+driver = "overlay"
+runroot = "/run/openclaw/containers"
+graphroot = "/var/lib/openclaw/containers/storage"
+
+[storage.options.overlay]
+mount_program = "/usr/bin/fuse-overlayfs"
+CONF
+chown openclaw:openclaw /var/lib/openclaw/.config/containers/storage.conf
+chmod 0600 /var/lib/openclaw/.config/containers/storage.conf
+
+cat >/var/lib/openclaw/.config/containers/containers.conf <<'CONF'
+[engine]
+events_logger = "file"
+runtime = "crun"
+cgroup_manager = "cgroupfs"
+CONF
+chown openclaw:openclaw /var/lib/openclaw/.config/containers/containers.conf
+chmod 0600 /var/lib/openclaw/.config/containers/containers.conf
+
+printf 'openclaw-os\n' >/etc/hostname
+cat >/etc/hosts <<'HOSTS'
+127.0.0.1 localhost
+127.0.1.1 openclaw-os
+::1 localhost ip6-localhost ip6-loopback
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+HOSTS
+
+rm -f /etc/os-release
+cat >/etc/os-release <<EOF_OS
+PRETTY_NAME="OpenClaw OS ${OPENCLAW_OS_VERSION}"
+NAME="OpenClaw OS"
+VERSION_ID="${OPENCLAW_OS_VERSION}"
+VERSION="${OPENCLAW_OS_VERSION} (Debian ${DEBIAN_CODENAME})"
+VERSION_CODENAME="${DEBIAN_CODENAME}"
+ID=openclaw-os
+ID_LIKE=debian
+HOME_URL="https://github.com/jason-allen-oneal/openclaw-os"
+SUPPORT_URL="https://github.com/jason-allen-oneal/openclaw-os/issues"
+BUG_REPORT_URL="https://github.com/jason-allen-oneal/openclaw-os/issues"
+EOF_OS
+
+cp /usr/share/openclaw-os/motd /etc/motd
+printf 'OpenClaw OS %s \\n \\l\n' "$OPENCLAW_OS_VERSION" >/etc/issue
+
+chmod 0755 \
+  /usr/local/bin/openclaw \
+  /usr/local/bin/docker \
+  /usr/local/sbin/openclaw-appliance \
+  /usr/local/sbin/openclaw-console \
+  /usr/libexec/openclaw-appliance/run \
+  /usr/libexec/openclaw-appliance/lib.sh \
+  /usr/libexec/openclaw-appliance/preflight
+chmod 0600 /etc/openclaw/appliance.conf
+chmod 0644 /etc/openclaw/appliance.env
+
+OPENCLAW_ROOT=/ /usr/local/sbin/openclaw-appliance firewall render --no-apply
+
+systemctl enable NetworkManager.service
+systemctl enable nftables.service
+systemctl enable apparmor.service || true
+systemctl enable auditd.service || true
+systemctl enable unattended-upgrades.service || true
+systemctl enable systemd-timesyncd.service || true
+systemctl enable openclaw.service
+systemctl enable openclaw-boot-marker.service
+systemctl enable openclaw-console.service
+systemctl enable openclaw-backup.timer
+systemctl enable openclaw-audit.timer
+systemctl disable ssh.service ssh.socket >/dev/null 2>&1 || true
+systemctl mask ssh.service ssh.socket >/dev/null 2>&1
+systemctl set-default multi-user.target
+systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target

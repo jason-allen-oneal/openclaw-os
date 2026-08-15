@@ -1,0 +1,40 @@
+{
+  agents: {
+    defaults: {
+      workspace: "/srv/openclaw/workspaces/main",
+      sandbox: {
+        mode: "all",
+        backend: "docker",
+        scope: "agent",
+        workspaceAccess: "rw",
+        docker: {
+          image: "openclaw-sandbox:bookworm-slim",
+          network: "none",
+          readOnlyRoot: true,
+          tmpfs: ["/tmp", "/var/tmp", "/run"],
+          capDrop: ["ALL"]
+        }
+      }
+    }
+  },
+  tools: {
+    elevated: {
+      enabled: false
+    }
+  },
+  gateway: {
+    bind: "loopback"
+  },
+  discovery: {
+    mdns: {
+      mode: "off"
+    }
+  },
+  update: {
+    channel: "extended-stable",
+    checkOnStart: false,
+    auto: {
+      enabled: false
+    }
+  }
+}

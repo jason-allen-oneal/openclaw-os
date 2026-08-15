@@ -1,0 +1,99 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+# shellcheck disable=SC1091
+source /usr/share/openclaw-os/release.env
+
+created="$(date --utc +%Y-%m-%dT%H:%M:%SZ)"
+namespace_uuid="$(cat /proc/sys/kernel/random/uuid)"
+packages_file="$(mktemp)"
+trap 'rm -f "$packages_file"' EXIT
+
+dpkg-query -W -f='${binary:Package}\t${Version}\t${Architecture}\n' | sort >"$packages_file"
+
+jq -Rn \
+  --arg created "$created" \
+  --arg namespace "https://github.com/jason-allen-oneal/openclaw-os/sbom/${OPENCLAW_OS_VERSION}/${namespace_uuid}" \
+  --arg os_version "$OPENCLAW_OS_VERSION" \
+  --arg node_version "$NODE_VERSION" \
+  --arg openclaw_version "$OPENCLAW_VERSION" \
+  --slurpfile build /usr/share/openclaw-os/build-info.json \
+  '
+  [inputs | split("\t") | {
+    name: .[0],
+    versionInfo: .[1],
+    architecture: .[2]
+  }] as $debs
+  | ($debs | to_entries | map({
+      SPDXID: ("SPDXRef-DebianPackage-" + (.key | tostring)),
+      name: .value.name,
+      versionInfo: .value.versionInfo,
+      downloadLocation: "NOASSERTION",
+      filesAnalyzed: false,
+      licenseConcluded: "NOASSERTION",
+      licenseDeclared: "NOASSERTION",
+      supplier: "Organization: Debian",
+      externalRefs: [{
+        referenceCategory: "PACKAGE-MANAGER",
+        referenceType: "purl",
+        referenceLocator: ("pkg:deb/debian/" + (.value.name | @uri) + "@" + (.value.versionInfo | @uri) + "?arch=" + (.value.architecture | @uri))
+      }]
+    })) as $debian_packages
+  | {
+      spdxVersion: "SPDX-2.3",
+      dataLicense: "CC0-1.0",
+      SPDXID: "SPDXRef-DOCUMENT",
+      name: ("OpenClaw OS " + $os_version),
+      documentNamespace: $namespace,
+      creationInfo: {
+        created: $created,
+        creators: ["Tool: openclaw-os-sbom-hook-0.1.0"]
+      },
+      documentDescribes: ["SPDXRef-OpenClawOS"],
+      packages: ([{
+        SPDXID: "SPDXRef-OpenClawOS",
+        name: "openclaw-os",
+        versionInfo: $os_version,
+        downloadLocation: "NOASSERTION",
+        filesAnalyzed: false,
+        licenseConcluded: "NOASSERTION",
+        licenseDeclared: "MIT"
+      }, {
+        SPDXID: "SPDXRef-NodeJS",
+        name: "node",
+        versionInfo: $node_version,
+        downloadLocation: "https://nodejs.org/dist/",
+        filesAnalyzed: false,
+        licenseConcluded: "NOASSERTION",
+        licenseDeclared: "NOASSERTION",
+        supplier: "Organization: OpenJS Foundation"
+      }, {
+        SPDXID: "SPDXRef-OpenClaw",
+        name: "openclaw",
+        versionInfo: $openclaw_version,
+        downloadLocation: "https://registry.npmjs.org/openclaw",
+        filesAnalyzed: false,
+        licenseConcluded: "MIT",
+        licenseDeclared: "MIT",
+        supplier: "Organization: OpenClaw"
+      }] + $debian_packages),
+      relationships: ([
+        {spdxElementId: "SPDXRef-OpenClawOS", relationshipType: "CONTAINS", relatedSpdxElement: "SPDXRef-NodeJS"},
+        {spdxElementId: "SPDXRef-OpenClawOS", relationshipType: "CONTAINS", relatedSpdxElement: "SPDXRef-OpenClaw"}
+      ] + ($debian_packages | map({
+        spdxElementId: "SPDXRef-OpenClawOS",
+        relationshipType: "CONTAINS",
+        relatedSpdxElement: .SPDXID
+      }))),
+      annotations: [{
+        annotationDate: $created,
+        annotationType: "OTHER",
+        annotator: "Tool: openclaw-os-sbom-hook-0.1.0",
+        comment: ("Build metadata: " + (($build[0] // {}) | tojson))
+      }]
+    }
+  ' "$packages_file" >/usr/share/openclaw-os/sbom.spdx.json
+
+chmod 0644 /usr/share/openclaw-os/sbom.spdx.json
+jq -e '.spdxVersion == "SPDX-2.3" and (.packages | length > 3)' \
+  /usr/share/openclaw-os/sbom.spdx.json >/dev/null

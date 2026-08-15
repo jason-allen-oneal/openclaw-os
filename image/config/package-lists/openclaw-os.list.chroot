@@ -1,0 +1,46 @@
+# Runtime and appliance base
+ca-certificates
+curl
+jq
+openssl
+xz-utils
+tar
+zstd
+rsync
+git
+less
+vim-tiny
+procps
+psmisc
+lsof
+iproute2
+iputils-ping
+dnsutils
+pciutils
+usbutils
+
+# Networking and firewall
+network-manager
+nftables
+openssh-server
+
+# Rootless containers
+podman
+uidmap
+slirp4netns
+fuse-overlayfs
+crun
+
+# Security and maintenance
+apparmor
+apparmor-utils
+auditd
+sudo
+unattended-upgrades
+needrestart
+systemd-timesyncd
+
+# Appliance console
+whiptail
+kbd
+console-setup

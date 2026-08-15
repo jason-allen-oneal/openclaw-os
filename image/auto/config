@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+
+ARCHITECTURE="${ARCHITECTURE:-amd64}"
+VERSION="${OPENCLAW_OS_VERSION:-0.1.0}"
+
+lb config noauto \
+  --mode debian \
+  --distribution trixie \
+  --architectures "$ARCHITECTURE" \
+  --binary-images iso-hybrid \
+  --bootloaders "syslinux,grub-efi" \
+  --uefi-secure-boot disable \
+  --system live \
+  --debian-installer live \
+  --debian-installer-distribution trixie \
+  --debian-installer-gui true \
+  --archive-areas "main contrib non-free-firmware" \
+  --apt-recommends false \
+  --security true \
+  --updates true \
+  --firmware-binary true \
+  --firmware-chroot true \
+  --memtest none \
+  --checksums sha256 \
+  --iso-application "OpenClaw OS ${VERSION}" \
+  --iso-publisher "Jason O'Neal" \
+  --iso-volume "OPENCLAW_OS_${VERSION}" \
+  --image-name "openclaw-os-${ARCHITECTURE}" \
+  --bootappend-live "boot=live components quiet hostname=openclaw-os username=openclaw-live console=tty0 console=ttyS0,115200n8" \
+  "$@"

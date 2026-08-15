@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+export TERM="${TERM:-linux}"
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+pause_screen() {
+  echo
+  read -r -p "Press Enter to return to the appliance console..." _
+}
+
+run_screen() {
+  clear
+  set +e
+  "$@"
+  local status=$?
+  set -e
+  if [[ "$status" -ne 0 ]]; then
+    echo
+    echo "Command exited with status $status."
+  fi
+  pause_screen
+}
+
+menu_choice() {
+  local title="$1"
+  shift
+  whiptail --title "$title" --menu "$title" 22 78 14 "$@" 3>&1 1>&2 2>&3
+}
+
+input_value() {
+  local title="$1"
+  local prompt="$2"
+  local default_value="${3:-}"
+  whiptail --title "$title" --inputbox "$prompt" 10 72 "$default_value" 3>&1 1>&2 2>&3
+}
+
+status_summary() {
+  local gateway configured version bind address
+  gateway="$(systemctl is-active openclaw.service 2>/dev/null || true)"
+  [[ -f /var/lib/openclaw/state/openclaw.json ]] && configured=yes || configured=no
+  version="$(readlink -f /opt/openclaw/current 2>/dev/null | xargs basename 2>/dev/null || printf unavailable)"
+  bind="unknown"
+  if [[ "$configured" == yes ]]; then
+    bind="$(openclaw config get gateway.bind 2>/dev/null || printf loopback)"
+  fi
+  address="$(hostname -I 2>/dev/null | xargs || true)"
+  printf 'OpenClaw %s | Configured: %s | Gateway: %s | Bind: %s\nAddresses: %s' \
+    "$version" "$configured" "${gateway:-inactive}" "$bind" "${address:-none}"
+}
+
+show_gateway_menu() {
+  local choice
+  choice="$(menu_choice "Gateway" \
+    1 "Start Gateway" \
+    2 "Stop Gateway" \
+    3 "Restart Gateway" \
+    4 "Detailed service status" \
+    5 "Health snapshot")" || return 0
+  case "$choice" in
+    1) run_screen openclaw-appliance gateway start ;;
+    2) run_screen openclaw-appliance gateway stop ;;
+    3) run_screen openclaw-appliance gateway restart ;;
+    4) run_screen openclaw-appliance gateway status ;;
+    5) run_screen openclaw health --verbose ;;
+  esac
+}
+
+show_access_menu() {
+  local choice
+  choice="$(menu_choice "Control UI access" \
+    1 "Show current access mode" \
+    2 "Loopback only" \
+    3 "Authenticated LAN access")" || return 0
+  case "$choice" in
+    1) run_screen openclaw-appliance access status ;;
+    2) run_screen openclaw-appliance access loopback ;;
+    3) run_screen openclaw-appliance access lan ;;
+  esac
+}
+
+show_sandbox_menu() {
+  local choice
+  choice="$(menu_choice "Tool sandbox" \
+    1 "Show sandbox image status" \
+    2 "Build or rebuild sandbox image" \
+    3 "Remove sandbox containers")" || return 0
+  case "$choice" in
+    1) run_screen openclaw-appliance sandbox status ;;
+    2) run_screen openclaw-appliance sandbox build ;;
+    3) run_screen openclaw-appliance sandbox reset ;;
+  esac
+}
+
+show_audit_menu() {
+  local choice
+  choice="$(menu_choice "Audit" \
+    1 "Standard offline audit" \
+    2 "Deep live audit" \
+    3 "Validate configuration only" \
+    4 "Secret audit only")" || return 0
+  case "$choice" in
+    1) run_screen openclaw-appliance audit standard ;;
+    2) run_screen openclaw-appliance audit deep ;;
+    3) run_screen openclaw config validate ;;
+    4) run_screen openclaw secrets audit --check ;;
+  esac
+}
+
+show_update_menu() {
+  local choice target
+  choice="$(menu_choice "OpenClaw releases" \
+    1 "Check installed releases" \
+    2 "Update from extended-stable" \
+    3 "Install a version or npm tag" \
+    4 "Roll back to an installed version")" || return 0
+  case "$choice" in
+    1) run_screen openclaw-appliance releases ;;
+    2) run_screen openclaw-appliance update extended-stable ;;
+    3)
+      target="$(input_value "Install OpenClaw" "Exact version or npm dist-tag:" "extended-stable")" || return 0
+      [[ -n "$target" ]] && run_screen openclaw-appliance update "$target"
+      ;;
+    4)
+      target="$(input_value "Roll back OpenClaw" "Installed version. Leave blank for the newest inactive release:" "")" || return 0
+      if [[ -n "$target" ]]; then
+        run_screen openclaw-appliance rollback "$target"
+      else
+        run_screen openclaw-appliance rollback
+      fi
+      ;;
+  esac
+}
+
+show_ssh_menu() {
+  local choice
+  choice="$(menu_choice "SSH" \
+    1 "Show SSH status" \
+    2 "Enable key-only SSH" \
+    3 "Disable SSH")" || return 0
+  case "$choice" in
+    1) run_screen openclaw-appliance ssh status ;;
+    2) run_screen openclaw-appliance ssh enable ;;
+    3) run_screen openclaw-appliance ssh disable ;;
+  esac
+}
+
+while true; do
+  summary="$(status_summary)"
+  choice="$(whiptail \
+    --title "OpenClaw OS" \
+    --menu "$summary" \
+    24 82 15 \
+    1 "Appliance status" \
+    2 "Run OpenClaw setup or repair" \
+    3 "Gateway controls" \
+    4 "Control UI access" \
+    5 "Network configuration" \
+    6 "Tool sandbox" \
+    7 "Create verified backup" \
+    8 "Configuration and security audits" \
+    9 "OpenClaw update and rollback" \
+    10 "SSH controls" \
+    11 "Gateway logs" \
+    12 "Switch to maintenance login on tty2" \
+    13 "Reboot appliance" \
+    14 "Shut down appliance" \
+    3>&1 1>&2 2>&3)" || choice=""
+
+  case "$choice" in
+    1) run_screen openclaw-appliance status ;;
+    2) run_screen openclaw-appliance setup ;;
+    3) show_gateway_menu ;;
+    4) show_access_menu ;;
+    5) clear; nmtui || true ;;
+    6) show_sandbox_menu ;;
+    7) run_screen openclaw-appliance backup ;;
+    8) show_audit_menu ;;
+    9) show_update_menu ;;
+    10) show_ssh_menu ;;
+    11) run_screen openclaw-appliance logs 250 ;;
+    12)
+      systemctl start getty@tty2.service >/dev/null 2>&1 || true
+      chvt 2
+      ;;
+    13)
+      if whiptail --title "Reboot" --yesno "Reboot OpenClaw OS now?" 8 50; then
+        systemctl reboot
+      fi
+      ;;
+    14)
+      if whiptail --title "Shutdown" --yesno "Shut down OpenClaw OS now?" 8 50; then
+        systemctl poweroff
+      fi
+      ;;
+    *) sleep 1 ;;
+  esac
+done

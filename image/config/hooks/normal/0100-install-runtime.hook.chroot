@@ -1,0 +1,61 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+# shellcheck disable=SC1091
+source /usr/share/openclaw-os/release.env
+# shellcheck disable=SC1091
+source /usr/libexec/openclaw-appliance/lib.sh
+
+architecture="$(dpkg --print-architecture)"
+case "$architecture" in
+  amd64)
+    node_arch="x64"
+    node_sha256="$NODE_SHA256_AMD64"
+    ;;
+  arm64)
+    node_arch="arm64"
+    node_sha256="$NODE_SHA256_ARM64"
+    ;;
+  *)
+    echo "Unsupported architecture: $architecture" >&2
+    exit 1
+    ;;
+esac
+
+node_archive="node-v${NODE_VERSION}-linux-${node_arch}.tar.xz"
+node_url="https://nodejs.org/dist/v${NODE_VERSION}/${node_archive}"
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
+  --retry 4 --retry-all-errors \
+  "$node_url" -o "$tmp_dir/$node_archive"
+printf '%s  %s\n' "$node_sha256" "$tmp_dir/$node_archive" | sha256sum --check --status
+
+node_release_dir="/opt/node/releases/$NODE_VERSION"
+rm -rf "$node_release_dir"
+install -d -m 0755 "$node_release_dir"
+tar -xJf "$tmp_dir/$node_archive" --strip-components=1 -C "$node_release_dir"
+ln -sfnT "$node_release_dir" /opt/node/current
+
+actual_node_version="$(/opt/node/current/bin/node --version)"
+[[ "$actual_node_version" == "v$NODE_VERSION" ]] || {
+  echo "Node version verification failed: $actual_node_version" >&2
+  exit 1
+}
+
+install_openclaw_release \
+  "$OPENCLAW_VERSION" \
+  "$OPENCLAW_NPM_INTEGRITY" \
+  "$OPENCLAW_TARBALL_URL" \
+  "$OPENCLAW_RELEASE_COMMIT"
+
+cat >/usr/share/openclaw-os/build-info.json <<JSON
+{
+  "openclawOsVersion": "$OPENCLAW_OS_VERSION",
+  "debianCodename": "$DEBIAN_CODENAME",
+  "nodeVersion": "$NODE_VERSION",
+  "openclawVersion": "$OPENCLAW_VERSION",
+  "openclawReleaseCommit": "$OPENCLAW_RELEASE_COMMIT"
+}
+JSON

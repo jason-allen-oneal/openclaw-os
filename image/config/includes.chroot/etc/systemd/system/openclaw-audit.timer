@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly OpenClaw security audit
+
+[Timer]
+OnCalendar=Sun *-*-* 04:11:00
+Persistent=true
+RandomizedDelaySec=30m
+Unit=openclaw-audit.service
+
+[Install]
+WantedBy=timers.target

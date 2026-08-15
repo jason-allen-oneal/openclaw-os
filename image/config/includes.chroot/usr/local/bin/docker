@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+socket="${OPENCLAW_PODMAN_SOCKET:-/run/openclaw/podman.sock}"
+[[ -S "$socket" ]] || {
+  echo "OpenClaw rootless Podman socket is not available: $socket" >&2
+  exit 1
+}
+exec /usr/bin/podman --remote --url "unix://$socket" "$@"

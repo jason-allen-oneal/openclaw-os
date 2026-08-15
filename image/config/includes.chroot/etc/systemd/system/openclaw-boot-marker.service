@@ -1,0 +1,14 @@
+[Unit]
+Description=Signal that OpenClaw OS reached multi-user boot
+After=local-fs.target network.target
+Before=openclaw-console.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'printf "OPENCLAW_OS_BOOT_OK\\n" >/dev/console'
+RemainAfterExit=yes
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

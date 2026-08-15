@@ -1,0 +1,14 @@
+/image/.build/
+/image/.cache/
+/image/chroot/
+/image/binary/
+/image/*.iso
+/image/*.img
+/image/*.contents
+/image/*.packages
+/image/*.zsync
+/image/*.hybrid.iso
+dist/
+*.log
+*.tmp
+.DS_Store

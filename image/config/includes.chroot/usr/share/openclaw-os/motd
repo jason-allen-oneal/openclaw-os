@@ -1,0 +1,9 @@
+OpenClaw OS
+
+Appliance console: tty1
+Maintenance login: tty2
+Command interface: sudo openclaw-appliance status
+OpenClaw CLI: sudo openclaw status
+
+The Gateway is loopback-only until explicitly exposed through the appliance
+console or `sudo openclaw-appliance access lan`.

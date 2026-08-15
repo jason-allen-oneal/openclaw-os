@@ -1,0 +1,35 @@
+[Unit]
+Description=Create and verify an OpenClaw backup
+After=local-fs.target
+ConditionPathExists=/var/lib/openclaw/state/openclaw.json
+
+[Service]
+Type=oneshot
+User=openclaw
+Group=openclaw
+EnvironmentFile=/etc/openclaw/appliance.env
+ExecStart=/usr/local/sbin/openclaw-appliance backup
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+UMask=0077
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/openclaw /var/log/openclaw /run/openclaw
+ReadOnlyPaths=/srv/openclaw /opt/openclaw /opt/node

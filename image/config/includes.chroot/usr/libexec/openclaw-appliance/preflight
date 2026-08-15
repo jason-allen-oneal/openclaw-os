@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+# shellcheck disable=SC1091
+source /usr/libexec/openclaw-appliance/lib.sh
+
+config_exists || die "OpenClaw has not been configured"
+[[ ! -L "$OPENCLAW_CONFIG_FILE" ]] || die "The active OpenClaw config must not be a symlink"
+run_openclaw config validate >/dev/null
+
+if [[ ! -S /run/openclaw/podman.sock ]]; then
+  warn "Rootless Podman API socket is not ready"
+fi
+if ! /usr/local/bin/docker image inspect openclaw-sandbox:bookworm-slim >/dev/null 2>&1; then
+  warn "Sandbox image is missing. Run: sudo openclaw-appliance sandbox build"
+fi

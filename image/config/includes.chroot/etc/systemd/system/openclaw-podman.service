@@ -1,0 +1,36 @@
+[Unit]
+Description=OpenClaw rootless Podman API
+Documentation=man:podman-system-service(1)
+Wants=network-online.target
+After=network-online.target local-fs.target
+Before=openclaw.service
+
+[Service]
+Type=simple
+User=openclaw
+Group=openclaw
+EnvironmentFile=/etc/openclaw/appliance.env
+ExecStartPre=/usr/bin/rm -f /run/openclaw/podman.sock
+ExecStart=/usr/bin/podman system service --time=0 unix:///run/openclaw/podman.sock
+ExecStopPost=/usr/bin/rm -f /run/openclaw/podman.sock
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+KillMode=mixed
+Delegate=yes
+UMask=0077
+
+NoNewPrivileges=no
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectHostname=yes
+ProtectClock=yes
+ReadWritePaths=/var/lib/openclaw /run/openclaw
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ "$(id -u)" -eq 0 || "$(id -un)" == "openclaw" ]]; then
+  exec /usr/libexec/openclaw-appliance/run "$@"
+fi
+exec sudo /usr/libexec/openclaw-appliance/run "$@"

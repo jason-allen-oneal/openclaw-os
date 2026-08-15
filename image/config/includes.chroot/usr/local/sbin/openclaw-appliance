@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# shellcheck disable=SC1091
+source "${OPENCLAW_LIB:-/usr/libexec/openclaw-appliance/lib.sh}"
+
+ROOT_PREFIX="${OPENCLAW_ROOT:-}"
+[[ "$ROOT_PREFIX" == "/" ]] && ROOT_PREFIX=""
+
+root_path() {
+  printf '%s%s\n' "$ROOT_PREFIX" "$1"
+}
+
+usage() {
+  cat <<'USAGE'
+Usage: openclaw-appliance <command> [arguments]
+
+Commands:
+  status                         Show appliance status
+  setup                          Run first-boot or repair onboarding
+  gateway <start|stop|restart|status>
+  sandbox <build|status|reset>   Manage the rootless tool sandbox
+  access <status|loopback|lan>   Control Gateway network exposure
+  firewall <render|allow|deny|list> [port] [--no-apply]
+  ssh <status|enable|disable>    Manage key-only SSH access
+  backup                         Create and verify a local backup
+  audit [standard|deep]          Validate config, secrets, and security
+  update [version-or-tag]        Install and activate a verified release
+  rollback [version]             Switch to an installed release
+  releases [--plain]             List installed OpenClaw releases
+  network                        Open NetworkManager TUI
+  logs [lines]                   Show Gateway journal logs
+  help                           Show this help
+USAGE
+}
+
+
+COMMANDS_DIR="${OPENCLAW_APPLIANCE_COMMANDS_DIR:-$(dirname "${OPENCLAW_LIB:-/usr/libexec/openclaw-appliance/lib.sh}")/commands}"
+for module in \
+  status-sandbox.sh \
+  firewall.sh \
+  gateway-access-setup.sh \
+  backup-audit.sh \
+  releases.sh \
+  system.sh; do
+  # shellcheck disable=SC1090
+  source "$COMMANDS_DIR/$module"
+done
+
+main() {
+  local command="${1:-help}"
+  shift || true
+  case "$command" in
+    status) command_status "$@" ;;
+    setup) command_setup "$@" ;;
+    gateway) command_gateway "$@" ;;
+    sandbox) command_sandbox "$@" ;;
+    access) command_access "$@" ;;
+    firewall) command_firewall "$@" ;;
+    ssh) command_ssh "$@" ;;
+    backup) command_backup "$@" ;;
+    audit) command_audit "$@" ;;
+    update) command_update "$@" ;;
+    rollback) command_rollback "$@" ;;
+    releases) command_releases "$@" ;;
+    network) command_network "$@" ;;
+    logs) command_logs "$@" ;;
+    help|-h|--help) usage ;;
+    *) usage >&2; die "Unknown command: $command" ;;
+  esac
+}
+
+if [[ "${OPENCLAW_APPLIANCE_LIBRARY_ONLY:-0}" != "1" ]]; then
+  main "$@"
+fi

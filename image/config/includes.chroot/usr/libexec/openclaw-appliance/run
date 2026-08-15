@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+# shellcheck disable=SC1091
+source /usr/libexec/openclaw-appliance/lib.sh
+run_openclaw "$@"

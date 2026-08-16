@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - name: Delete fully merged pull request branches
+      - name: Delete fully merged transient branches
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -43,6 +43,17 @@ jobs:
           repository = os.environ.get("GITHUB_REPOSITORY", "")
           api_url = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
           default_branch = os.environ.get("DEFAULT_BRANCH", "main")
+          transient_prefixes = (
+              "build/",
+              "chore/",
+              "ci/",
+              "docs/",
+              "feat/",
+              "fix/",
+              "perf/",
+              "refactor/",
+              "test/",
+          )
 
           if not token or not repository or "/" not in repository:
               raise SystemExit("GitHub workflow context is incomplete")
@@ -112,8 +123,8 @@ jobs:
                   continue
 
               merged_prs = [pr for pr in pull_requests(branch, "closed") if pr.get("merged_at")]
-              if not merged_prs:
-                  skipped.append(f"{branch}: no merged pull request")
+              if not merged_prs and not branch.startswith(transient_prefixes):
+                  skipped.append(f"{branch}: not a merged PR branch or transient branch")
                   continue
 
               comparison_ref = (

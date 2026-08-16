@@ -25,7 +25,7 @@ lb config noauto \
   --checksums sha256 \
   --iso-application "OpenClaw OS ${VERSION}" \
   --iso-publisher "Jason O'Neal" \
-  --iso-volume "OPENCLAW_OS_${VERSION}" \
-  --image-name "openclaw-os-${ARCHITECTURE}" \
+  --iso-volume "OPENCLAW_OS" \
+  --image-name "openclaw-os" \
   --bootappend-live "boot=live components quiet hostname=openclaw-os username=openclaw-live console=tty0 console=ttyS0,115200n8" \
   "$@"

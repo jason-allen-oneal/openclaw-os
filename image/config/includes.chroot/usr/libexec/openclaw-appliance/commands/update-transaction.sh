@@ -225,6 +225,8 @@ use_pending_candidate() {
   RESOLVED_INTEGRITY="$PENDING_INTEGRITY"
   RESOLVED_TARBALL="$PENDING_TARBALL"
   RESOLVED_COMPATIBILITY="$(openclaw_version_compatibility "$PENDING_VERSION")"
+  # Consumed by command_update_apply in the separately sourced releases module.
+  # shellcheck disable=SC2034
   RESOLVED_REQUESTED_SPEC="$PENDING_VERSION"
   return 0
 }

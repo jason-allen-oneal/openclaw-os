@@ -50,6 +50,8 @@ jobs:
   build-amd64:
     runs-on: ubuntu-24.04
     timeout-minutes: 150
+    env:
+      SMOKE_DIAGNOSTICS_DIR: ${{ runner.temp }}/openclaw-os-uefi-smoke
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -93,37 +95,45 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes ovmf qemu-system-x86 squashfs-tools xorriso
 
-      - name: Verify boot marker installation
+      - name: Verify boot configuration
         run: |
           set -euo pipefail
           iso_path="dist/openclaw-os-$(cat VERSION)-amd64.iso"
           extract_dir="$(mktemp -d)"
           trap 'rm -rf "$extract_dir"' EXIT
+          mkdir -p "$SMOKE_DIAGNOSTICS_DIR"
 
           xorriso -osirrox on \
             -indev "$iso_path" \
             -extract /live/filesystem.squashfs "$extract_dir/filesystem.squashfs"
+          xorriso -osirrox on \
+            -indev "$iso_path" \
+            -extract /boot/grub/grub.cfg "$SMOKE_DIAGNOSTICS_DIR/grub.cfg"
+          xorriso -osirrox on \
+            -indev "$iso_path" \
+            -extract /boot/grub/live.cfg "$SMOKE_DIAGNOSTICS_DIR/grub-live.cfg"
           unsquashfs -cat \
             "$extract_dir/filesystem.squashfs" \
             etc/systemd/system/openclaw-boot-marker.service \
-            >"$extract_dir/openclaw-boot-marker.service"
+            >"$SMOKE_DIAGNOSTICS_DIR/openclaw-boot-marker.service"
           unsquashfs -ll "$extract_dir/filesystem.squashfs" \
-            >"$extract_dir/squashfs-listing.txt"
+            >"$SMOKE_DIAGNOSTICS_DIR/squashfs-listing.txt"
 
           grep -Fq 'OPENCLAW_OS_BOOT_OK' \
-            "$extract_dir/openclaw-boot-marker.service"
+            "$SMOKE_DIAGNOSTICS_DIR/openclaw-boot-marker.service"
           grep -Fq '/dev/ttyS0' \
-            "$extract_dir/openclaw-boot-marker.service"
+            "$SMOKE_DIAGNOSTICS_DIR/openclaw-boot-marker.service"
           grep -Fq \
             'etc/systemd/system/multi-user.target.wants/openclaw-boot-marker.service' \
-            "$extract_dir/squashfs-listing.txt"
+            "$SMOKE_DIAGNOSTICS_DIR/squashfs-listing.txt"
+          grep -Eq '^set timeout=5$' "$SMOKE_DIAGNOSTICS_DIR/grub.cfg"
+          grep -Fq 'terminal_output console serial' "$SMOKE_DIAGNOSTICS_DIR/grub.cfg"
+          grep -Fq 'source /boot/grub/live.cfg' "$SMOKE_DIAGNOSTICS_DIR/grub.cfg"
+          grep -Fq 'console=ttyS0,115200n8' "$SMOKE_DIAGNOSTICS_DIR/grub-live.cfg"
 
       - name: UEFI live-boot smoke test
         id: uefi_smoke
-        env:
-          SMOKE_DIAGNOSTICS_DIR: ${{ runner.temp }}/openclaw-os-uefi-smoke
         run: |
-          rm -rf "$SMOKE_DIAGNOSTICS_DIR"
           mkdir -p "$SMOKE_DIAGNOSTICS_DIR"
           ./scripts/smoke-iso.sh "dist/openclaw-os-$(cat VERSION)-amd64.iso"
 
@@ -132,7 +142,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openclaw-os-uefi-smoke-${{ github.sha }}
-          path: ${{ runner.temp }}/openclaw-os-uefi-smoke/
+          path: ${{ env.SMOKE_DIAGNOSTICS_DIR }}/
           if-no-files-found: error
           retention-days: 14
 

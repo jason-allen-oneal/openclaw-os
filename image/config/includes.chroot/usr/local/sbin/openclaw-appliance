@@ -20,24 +20,32 @@ usage() {
 Usage: openclaw-appliance <command> [arguments]
 
 Commands:
-  status                         Show appliance status
-  setup                          Run first-boot or repair onboarding
+  status
+  setup
   gateway <start|stop|restart|status>
-  sandbox <build|status|reset>   Manage the rootless tool sandbox
-  access <status|loopback|lan>   Control Gateway network exposure
+  sandbox <build|status|reset>
+  policy <list|status|apply|patch|elevated> ...
+  access <status|loopback|lan>
   firewall <render|allow|deny|list> [port] [--no-apply]
-  ssh <status|enable|disable>    Manage key-only SSH access
-  backup                         Create and verify a local backup
-  audit [standard|deep]          Validate config, secrets, and security
-  update [check|stage|apply|status|cancel] [version-or-tag] [--allow-untested]
-  rollback [version]             Switch to an installed release
-  releases [--plain]             List installed and staged OpenClaw releases
-  network                        Open NetworkManager TUI
-  logs [lines]                   Show Gateway journal logs
-  help                           Show this help
+  ssh <status|enable|disable>
+  backup
+  audit [standard|deep]
+  update [check|stage|apply|status|cancel|recover] [version-or-tag] [options]
+  rollback [version] [--allow-stopped] [--retry-failed]
+  releases [--plain]
+  network
+  logs [lines]
+  help
 
-The legacy command `update <version-or-tag>` still stages and applies in one
-transaction. The separate check, stage, and apply flow is safer.
+Safe update flow:
+  openclaw-appliance update check extended-stable
+  openclaw-appliance update stage <exact-version>
+  openclaw-appliance update apply
+
+Power-user policy examples:
+  openclaw-appliance policy apply developer --acknowledge-risk
+  openclaw-appliance policy elevated enable discord id:123 --acknowledge-risk
+  openclaw-appliance policy apply locked
 USAGE
 }
 
@@ -45,6 +53,7 @@ COMMANDS_DIR="${OPENCLAW_APPLIANCE_COMMANDS_DIR:-$(dirname "${OPENCLAW_LIB:-/usr
 for module in \
   status-sandbox.sh \
   firewall.sh \
+  policy.sh \
   gateway-access-setup.sh \
   backup-audit.sh \
   releases.sh \
@@ -55,7 +64,7 @@ done
 
 load_command_credential() {
   case "$1" in
-    status|sandbox|access|backup|audit|update|rollback)
+    status|sandbox|policy|access|backup|audit|update|rollback)
       openclaw_load_gateway_credential_if_present
       ;;
   esac
@@ -70,6 +79,7 @@ main() {
     setup) command_setup "$@" ;;
     gateway) command_gateway "$@" ;;
     sandbox) command_sandbox "$@" ;;
+    policy) command_policy "$@" ;;
     access) command_access "$@" ;;
     firewall) command_firewall "$@" ;;
     ssh) command_ssh "$@" ;;

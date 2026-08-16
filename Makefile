@@ -3,7 +3,7 @@ ROOT := $(CURDIR)
 VERSION := $(shell cat VERSION)
 ARCH ?= amd64
 
-.PHONY: validate verify-artifacts test test-control-plane iso smoke clean run tree
+.PHONY: validate verify-artifacts test test-control-plane sync-repo-metadata iso smoke clean run tree
 
 validate:
 	./scripts/validate.sh
@@ -13,10 +13,15 @@ verify-artifacts:
 
 test:
 	./tests/appliance-test.sh
+	./tests/policy-test.sh
+	./tests/repository-metadata-test.sh
 	./scripts/test-control-plane.sh
 
 test-control-plane:
 	./scripts/test-control-plane.sh
+
+sync-repo-metadata:
+	./scripts/sync-repository-metadata.sh
 
 iso: validate verify-artifacts
 	sudo ./scripts/build-image.sh $(ARCH)

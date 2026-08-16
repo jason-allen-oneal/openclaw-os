@@ -17,6 +17,8 @@ on:
       - 'image/**'
       - 'scripts/**'
       - 'tests/**'
+      - 'README.md'
+      - 'docs/**'
   pull_request:
     paths:
       - '.github/workflows/build-iso.yml'
@@ -29,6 +31,8 @@ on:
       - 'image/**'
       - 'scripts/**'
       - 'tests/**'
+      - 'README.md'
+      - 'docs/**'
 
 permissions:
   contents: read
@@ -77,6 +81,8 @@ jobs:
               test "$(node --version)" = "v${NODE_VERSION}"
 
               make validate
+              ./tests/policy-test.sh
+              ./tests/repository-metadata-test.sh
               make verify-artifacts
               ./scripts/build-image.sh amd64
             '

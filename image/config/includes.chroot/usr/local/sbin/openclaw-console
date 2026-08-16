@@ -25,14 +25,14 @@ run_screen() {
 menu_choice() {
   local title="$1"
   shift
-  whiptail --title "$title" --menu "$title" 22 78 14 "$@" 3>&1 1>&2 2>&3
+  whiptail --title "$title" --menu "$title" 24 82 16 "$@" 3>&1 1>&2 2>&3
 }
 
 input_value() {
   local title="$1"
   local prompt="$2"
   local default_value="${3:-}"
-  whiptail --title "$title" --inputbox "$prompt" 10 72 "$default_value" 3>&1 1>&2 2>&3
+  whiptail --title "$title" --inputbox "$prompt" 10 76 "$default_value" 3>&1 1>&2 2>&3
 }
 
 status_summary() {
@@ -110,18 +110,49 @@ show_audit_menu() {
 show_update_menu() {
   local choice target
   choice="$(menu_choice "OpenClaw releases" \
-    1 "Check installed releases" \
-    2 "Update from extended-stable" \
-    3 "Install a version or npm tag" \
-    4 "Roll back to an installed version")" || return 0
+    1 "Show update and compatibility status" \
+    2 "Check extended-stable without changing the system" \
+    3 "Stage an exact tested version" \
+    4 "Apply the staged tested version" \
+    5 "Cancel staged activation" \
+    6 "Stage an untested exact version" \
+    7 "Apply the staged untested version" \
+    8 "List installed releases" \
+    9 "Roll back to an installed version")" || return 0
   case "$choice" in
-    1) run_screen openclaw-appliance releases ;;
-    2) run_screen openclaw-appliance update extended-stable ;;
+    1) run_screen openclaw-appliance update status ;;
+    2) run_screen openclaw-appliance update check extended-stable ;;
     3)
-      target="$(input_value "Install OpenClaw" "Exact version or npm dist-tag:" "extended-stable")" || return 0
-      [[ -n "$target" ]] && run_screen openclaw-appliance update "$target"
+      target="$(input_value "Stage OpenClaw" "Exact version reported as tested by the update check:" "")" || return 0
+      [[ -n "$target" ]] && run_screen openclaw-appliance update stage "$target"
       ;;
     4)
+      if whiptail --title "Apply staged OpenClaw" --yesno \
+        "Create a verified backup and activate the exact staged release? A running Gateway will restart." 10 72; then
+        run_screen openclaw-appliance update apply
+      fi
+      ;;
+    5)
+      if whiptail --title "Cancel staged activation" --yesno \
+        "Clear pending activation metadata? The inactive code release will remain installed until pruning." 10 72; then
+        run_screen openclaw-appliance update cancel
+      fi
+      ;;
+    6)
+      target="$(input_value "Stage untested OpenClaw" "Exact version only. This release is outside the tested compatibility set:" "")" || return 0
+      if [[ -n "$target" ]] && whiptail --title "Untested release" --yesno \
+        "Stage OpenClaw $target without an OpenClaw OS compatibility guarantee?" 10 72; then
+        run_screen openclaw-appliance update stage "$target" --allow-untested
+      fi
+      ;;
+    7)
+      if whiptail --title "Apply untested release" --yesno \
+        "Activate the exact staged untested release? Code rollback cannot guarantee reversal of state migrations." 10 72; then
+        run_screen openclaw-appliance update apply --allow-untested
+      fi
+      ;;
+    8) run_screen openclaw-appliance releases ;;
+    9)
       target="$(input_value "Roll back OpenClaw" "Installed version. Leave blank for the newest inactive release:" "")" || return 0
       if [[ -n "$target" ]]; then
         run_screen openclaw-appliance rollback "$target"

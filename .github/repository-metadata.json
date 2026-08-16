@@ -1,0 +1,14 @@
+{
+  "repository": "jason-allen-oneal/openclaw-os",
+  "description": "A Debian 13 appliance distribution for safely running and managing OpenClaw.",
+  "homepage": "https://github.com/jason-allen-oneal/openclaw-os",
+  "topics": [
+    "ai-agent",
+    "appliance",
+    "debian",
+    "linux",
+    "openclaw",
+    "operating-system",
+    "security"
+  ]
+}

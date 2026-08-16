@@ -82,7 +82,10 @@ download_https() {
 }
 resolve_npm_metadata extended-stable
 [[ "$RESOLVED_VERSION" == "2026.6.34" ]] || die "Resolved registry version was incorrect"
-verify_openclaw_release_metadata   2026.6.34   sha512-VGVzdA==   0123456789abcdef0123456789abcdef01234567
+verify_openclaw_release_metadata \
+  2026.6.34 \
+  sha512-VGVzdA== \
+  0123456789abcdef0123456789abcdef01234567
 if (verify_openclaw_release_metadata 2026.6.34 sha512-V3Jvbmc=) >/dev/null 2>&1; then
   die "Mismatched GitHub and npm integrity was accepted"
 fi
@@ -115,6 +118,7 @@ grep -q 'policy drop;' "$OPENCLAW_ROOT/etc/nftables.conf" || die "Firewall rende
 mkdir -p "$(dirname "$OPENCLAW_CONFIG_FILE")" "$OPENCLAW_RELEASES_DIR/5.0.0/bin"
 printf '{}\n' >"$OPENCLAW_CONFIG_FILE"
 touch "$OPENCLAW_RELEASES_DIR/5.0.0/bin/openclaw"
+chmod +x "$OPENCLAW_RELEASES_DIR/5.0.0/bin/openclaw"
 previous_target="$(readlink -f "$OPENCLAW_CURRENT_LINK")"
 systemctl_log="$TEST_ROOT/systemctl.log"
 run_openclaw() { return 1; }
@@ -126,7 +130,9 @@ wait_for_gateway_health() { return 0; }
 if activate_release "$OPENCLAW_RELEASES_DIR/5.0.0" "$previous_target"; then
   die "Invalid candidate release was activated"
 fi
-[[ "$(readlink -f "$OPENCLAW_CURRENT_LINK")" == "$previous_target" ]] ||   die "Invalid candidate did not restore the previous release"
-grep -q '^restart openclaw.service$' "$systemctl_log" ||   die "Previous Gateway was not restarted after candidate validation failure"
+[[ "$(readlink -f "$OPENCLAW_CURRENT_LINK")" == "$previous_target" ]] || \
+  die "Invalid candidate did not restore the previous release"
+grep -q '^restart openclaw.service$' "$systemctl_log" || \
+  die "Previous Gateway was not restarted after candidate validation failure"
 
 echo "Appliance tests passed."

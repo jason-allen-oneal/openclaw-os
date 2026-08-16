@@ -27,7 +27,7 @@ if [[ "$EUID" -ne 0 ]]; then
 fi
 
 if [[ "$ARCH" != "amd64" ]]; then
-  echo "OpenClaw OS 0.1.0 currently builds amd64 installer media only." >&2
+  echo "OpenClaw OS $VERSION currently builds amd64 installer media only." >&2
   exit 1
 fi
 
@@ -53,6 +53,7 @@ fi
 
 cd "$IMAGE_DIR"
 lb clean --purge >/dev/null 2>&1 || true
+find . -maxdepth 1 -type f -name '*.iso' -delete
 "$ROOT_DIR/scripts/stage-control-plane.sh" "$CONTROL_PLANE_DESTINATION"
 ./auto/config
 
@@ -66,15 +67,30 @@ if [[ "$build_status" -ne 0 ]]; then
 fi
 
 source_iso=""
-for candidate in live-image-${ARCH}.hybrid.iso live-image-${ARCH}.iso openclaw-os-${ARCH}.hybrid.iso; do
+for candidate in \
+  "openclaw-os-${ARCH}.hybrid.iso" \
+  "openclaw-os-${ARCH}.iso" \
+  "openclaw-os-${ARCH}-${ARCH}.hybrid.iso" \
+  "live-image-${ARCH}.hybrid.iso" \
+  "live-image-${ARCH}.iso"; do
   if [[ -f "$candidate" ]]; then
     source_iso="$candidate"
     break
   fi
 done
+
 if [[ -z "$source_iso" ]]; then
-  echo "live-build completed but no ISO was found in $IMAGE_DIR" >&2
-  exit 1
+  mapfile -t generated_isos < <(find . -maxdepth 1 -type f -name '*.iso' -printf '%f\n' | sort)
+  if ((${#generated_isos[@]} == 1)); then
+    source_iso="${generated_isos[0]}"
+  elif ((${#generated_isos[@]} > 1)); then
+    printf 'live-build produced multiple unrecognized ISO files:\n' >&2
+    printf '  %s\n' "${generated_isos[@]}" >&2
+    exit 1
+  else
+    echo "live-build completed but no ISO was found in $IMAGE_DIR" >&2
+    exit 1
+  fi
 fi
 
 target_iso="$DIST_DIR/openclaw-os-${VERSION}-${ARCH}.iso"

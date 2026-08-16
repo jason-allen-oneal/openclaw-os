@@ -113,10 +113,18 @@ load_pending_update() {
   load_release_env
   PENDING_OS_VERSION="$(jq -r '.openclawOsVersion' "$OPENCLAW_PENDING_UPDATE_FILE")"
   PENDING_VERSION="$(jq -r '.version' "$OPENCLAW_PENDING_UPDATE_FILE")"
+  # Consumed by the separately sourced update transaction module.
+  # shellcheck disable=SC2034
   PENDING_INTEGRITY="$(jq -r '.integrity' "$OPENCLAW_PENDING_UPDATE_FILE")"
   PENDING_TARBALL="$(jq -r '.tarball' "$OPENCLAW_PENDING_UPDATE_FILE")"
+  # Retained as transaction provenance for status and future migration logic.
+  # shellcheck disable=SC2034
   PENDING_REQUESTED_SPEC="$(jq -r '.requestedSpec' "$OPENCLAW_PENDING_UPDATE_FILE")"
+  # Consumed by the separately sourced release command module.
+  # shellcheck disable=SC2034
   PENDING_COMPATIBILITY="$(jq -r '.compatibility' "$OPENCLAW_PENDING_UPDATE_FILE")"
+  # Consumed by the separately sourced release command module.
+  # shellcheck disable=SC2034
   PENDING_STAGED_AT="$(jq -r '.stagedAt' "$OPENCLAW_PENDING_UPDATE_FILE")"
 
   [[ "$PENDING_OS_VERSION" == "$OPENCLAW_OS_VERSION" ]] || \

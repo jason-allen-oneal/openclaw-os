@@ -13,6 +13,7 @@ verify-artifacts:
 
 test:
 	./tests/appliance-test.sh
+	./tests/update-test.sh
 	./tests/policy-test.sh
 	./tests/repository-metadata-test.sh
 	./scripts/test-control-plane.sh

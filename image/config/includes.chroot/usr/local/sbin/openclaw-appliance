@@ -29,12 +29,15 @@ Commands:
   ssh <status|enable|disable>    Manage key-only SSH access
   backup                         Create and verify a local backup
   audit [standard|deep]          Validate config, secrets, and security
-  update [version-or-tag]        Install and activate a verified release
+  update [check|stage|apply|status|cancel] [version-or-tag] [--allow-untested]
   rollback [version]             Switch to an installed release
-  releases [--plain]             List installed OpenClaw releases
+  releases [--plain]             List installed and staged OpenClaw releases
   network                        Open NetworkManager TUI
   logs [lines]                   Show Gateway journal logs
   help                           Show this help
+
+The legacy command `update <version-or-tag>` still stages and applies in one
+transaction. The separate check, stage, and apply flow is safer.
 USAGE
 }
 

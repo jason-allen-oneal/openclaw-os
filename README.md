@@ -6,8 +6,8 @@ OpenClaw as an always-on, single-operator gateway.
 The repository builds an installable amd64 hybrid ISO with a pinned Node.js 24
 LTS runtime, a pinned OpenClaw extended-stable release, a hardened systemd
 service, rootless Podman-backed tool sandboxes, nftables, verified backups,
-periodic security checks, versioned OpenClaw updates, rollback, an SPDX SBOM,
-and a local appliance console.
+periodic security checks, staged OpenClaw upgrades, automatic code rollback, an
+SPDX SBOM, and a local appliance console.
 
 The build never reads from a developer's OpenClaw checkout or home-directory
 OpenClaw state. It downloads exact upstream artifacts into an isolated image
@@ -73,10 +73,12 @@ sudo apt install --yes \
   qemu-system-x86 ovmf
 ```
 
-Validate source and upstream pins, then build and smoke-test the ISO:
+Validate source and upstream pins, run the tests, then build and smoke-test the
+ISO:
 
 ```bash
 make validate
+make test
 make verify-artifacts
 make iso
 make smoke
@@ -113,7 +115,7 @@ The appliance console can:
 - Enable or disable key-only SSH.
 - Create and verify OpenClaw backups.
 - Run configuration, secret, and security audits.
-- Install verified OpenClaw releases and roll code back.
+- Check, stage, apply, cancel, and roll back OpenClaw releases.
 
 The same operations are available from a maintenance shell:
 
@@ -124,33 +126,49 @@ sudo openclaw-appliance sandbox build
 sudo openclaw-appliance access lan
 sudo openclaw-appliance backup
 sudo openclaw-appliance audit deep
-sudo openclaw-appliance update extended-stable
-sudo openclaw-appliance rollback 2026.6.34
+sudo openclaw-appliance update status
+sudo openclaw-appliance update check extended-stable
+sudo openclaw-appliance releases
 ```
 
 Use `sudo openclaw ...` for direct OpenClaw CLI access against the appliance
 state directory.
 
-## Updates and rollback
+## Safe OpenClaw upgrades
 
 Debian security updates are handled by unattended-upgrades. OpenClaw's own
-startup update check and background auto-update are disabled because the
-appliance owns the core code transaction.
+startup update check and background auto-update remain disabled because the
+appliance owns the OpenClaw code transaction.
 
-`openclaw-appliance update` performs these steps:
+OpenClaw upgrades are split into reviewable phases:
 
-1. Resolve an exact npm version.
-2. Require registry signature metadata.
-3. Cross-check registry SRI against the matching GitHub release record.
-4. Create and verify an OpenClaw backup when state exists.
-5. Install the candidate under `/opt/openclaw/releases/<version>`.
-6. Validate the candidate against the active configuration.
-7. Switch `/opt/openclaw/current` and restart the Gateway.
-8. Check Gateway health and restore the prior code symlink on failure.
+```bash
+sudo openclaw-appliance update check extended-stable
+sudo openclaw-appliance update stage <exact-version>
+sudo openclaw-appliance update status
+sudo openclaw-appliance update apply
+```
 
-Code rollback does not automatically rewind OpenClaw state. State restoration
-is separate because it can rewind channel ratchets, credentials, approvals,
-delivery queues, and conversations.
+`check` verifies npm and GitHub release metadata without changing the system.
+`stage` installs and validates an exact candidate under
+`/opt/openclaw/releases/<version>` without switching the active symlink or
+restarting the Gateway. `apply` uses the recorded exact staged release, creates
+a verified backup, switches the symlink, and runs a health check. It preserves
+whether the Gateway was running or stopped before the transaction.
+
+By default, only versions in `config/openclaw-compatibility.json` may be staged
+or activated. A power user can test an unlisted release only by naming the exact
+version and supplying `--allow-untested`. Moving npm tags cannot use that
+exception.
+
+If candidate validation or health checking fails, OpenClaw OS restores the prior
+code symlink and prior Gateway service state. Code rollback does not
+automatically rewind OpenClaw state. The pre-activation verified backup remains
+available because restoring state can rewind credentials, channel ratchets,
+approvals, delivery queues, conversations, and workspaces.
+
+The full operating procedure and failure model are in
+[`docs/UPDATES.md`](docs/UPDATES.md).
 
 ## Backups and audits
 
@@ -165,13 +183,24 @@ Backups can contain credentials, channel state, conversations, and workspace
 data. Protect exported backups with encryption and access controls equivalent
 to the running appliance.
 
+## Repository metadata
+
+The canonical GitHub description, homepage, and topics are stored in
+`.github/repository-metadata.json`. A repository administrator can synchronize
+them after authenticating GitHub CLI:
+
+```bash
+make sync-repo-metadata
+```
+
 ## Project status
 
 Version 0.1.0 is the first functional amd64 image profile. It is intended for
 VM and lab deployment before production use. The source validation, upstream
 artifact verification, ISO pipeline, UEFI live-boot smoke test, appliance
 runtime, firewall, rootless sandbox bridge, console, backups, audits, SBOM,
-update transaction, and code rollback are implemented.
+staged OpenClaw update transaction, compatibility gate, and code rollback are
+implemented.
 
 The automated test does not complete a full interactive Debian installation.
 Physical hardware coverage, browser sandbox images, ARM64 installer media,

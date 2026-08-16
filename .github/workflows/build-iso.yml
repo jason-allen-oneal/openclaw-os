@@ -8,6 +8,7 @@ on:
       - 'v*'
     paths:
       - '.github/workflows/build-iso.yml'
+      - '.github/repository-metadata.json'
       - 'VERSION'
       - 'package.json'
       - 'Makefile'
@@ -22,6 +23,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/build-iso.yml'
+      - '.github/repository-metadata.json'
       - 'VERSION'
       - 'package.json'
       - 'Makefile'
@@ -81,8 +83,7 @@ jobs:
               test "$(node --version)" = "v${NODE_VERSION}"
 
               make validate
-              ./tests/policy-test.sh
-              ./tests/repository-metadata-test.sh
+              make test
               make verify-artifacts
               ./scripts/build-image.sh amd64
             '

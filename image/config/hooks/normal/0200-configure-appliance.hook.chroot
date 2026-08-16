@@ -135,6 +135,9 @@ systemctl enable openclaw.service
 systemctl enable openclaw-hostd.service
 systemctl enable openclaw-controller.service
 systemctl enable openclaw-boot-marker.service
+install -d -m 0755 /etc/systemd/system/multi-user.target.wants
+ln -sfn /etc/systemd/system/openclaw-boot-marker.service \
+  /etc/systemd/system/multi-user.target.wants/openclaw-boot-marker.service
 systemctl enable openclaw-console.service
 systemctl enable openclaw-backup.timer
 systemctl enable openclaw-audit.timer

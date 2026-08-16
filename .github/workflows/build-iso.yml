@@ -91,10 +91,54 @@ jobs:
       - name: Install UEFI smoke-test tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes qemu-system-x86 ovmf
+          sudo apt-get install --yes ovmf qemu-system-x86 squashfs-tools xorriso
+
+      - name: Verify boot marker installation
+        run: |
+          set -euo pipefail
+          iso_path="dist/openclaw-os-$(cat VERSION)-amd64.iso"
+          extract_dir="$(mktemp -d)"
+          trap 'rm -rf "$extract_dir"' EXIT
+
+          xorriso -osirrox on \
+            -indev "$iso_path" \
+            -extract /live/filesystem.squashfs "$extract_dir/filesystem.squashfs"
+          unsquashfs -cat \
+            "$extract_dir/filesystem.squashfs" \
+            etc/systemd/system/openclaw-boot-marker.service \
+            >"$extract_dir/openclaw-boot-marker.service"
+          unsquashfs -ll "$extract_dir/filesystem.squashfs" \
+            >"$extract_dir/squashfs-listing.txt"
+
+          grep -Fq 'OPENCLAW_OS_BOOT_OK' \
+            "$extract_dir/openclaw-boot-marker.service"
+          grep -Fq '/dev/ttyS0' \
+            "$extract_dir/openclaw-boot-marker.service"
+          grep -Fq \
+            'etc/systemd/system/multi-user.target.wants/openclaw-boot-marker.service' \
+            "$extract_dir/squashfs-listing.txt"
 
       - name: UEFI live-boot smoke test
+        id: uefi_smoke
         run: ./scripts/smoke-iso.sh dist/openclaw-os-$(cat VERSION)-amd64.iso
+
+      - name: Upload UEFI smoke-test diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openclaw-os-uefi-smoke-${{ github.sha }}
+          path: dist/smoke-test/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload unverified ISO debug artifact
+        if: ${{ always() && steps.uefi_smoke.outcome == 'failure' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openclaw-os-unverified-${{ github.sha }}
+          path: dist/openclaw-os-*.iso
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload ISO, SBOM, and metadata
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

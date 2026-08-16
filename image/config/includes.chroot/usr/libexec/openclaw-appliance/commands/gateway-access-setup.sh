@@ -153,12 +153,22 @@ command_setup() {
     --skip-health
 
   run_openclaw config patch --file /usr/share/openclaw-os/defaults/openclaw.patch.json5
+  run_openclaw config patch --file /usr/share/openclaw-os/policies/locked.json5
   run_openclaw config validate
   chown openclaw:openclaw "$OPENCLAW_CONFIG_FILE"
   chmod 0600 "$OPENCLAW_CONFIG_FILE"
+  record_policy_state \
+    locked \
+    profile:locked \
+    "$(sha256sum /usr/share/openclaw-os/policies/locked.json5 | awk '{print $1}')"
   write_controller_environment
 
-  systemctl enable openclaw.service openclaw-hostd.service openclaw-controller.service >/dev/null
+  systemctl enable \
+    openclaw-update-recovery.service \
+    openclaw.service \
+    openclaw-hostd.service \
+    openclaw-controller.service \
+    >/dev/null
   systemctl restart openclaw.service
   if ! wait_for_gateway_health 45; then
     systemctl status openclaw.service --no-pager || true
@@ -192,6 +202,12 @@ these methods to reach the OpenClaw Control UI:
 The read-only appliance controller is available locally at:
 
   http://127.0.0.1:9080/api/v1/status
+
+The locked execution profile is active. Review other profiles with:
+
+  sudo openclaw-appliance policy list
+  sudo openclaw-appliance policy status
+  less /usr/share/openclaw-os/policies/README.md
 
 Run `sudo openclaw-appliance status` for current health and addresses.
 DONE

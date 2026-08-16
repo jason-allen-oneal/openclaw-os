@@ -1,0 +1,20 @@
+{
+  agents: {
+    defaults: {
+      sandbox: {
+        mode: "off",
+        backend: null,
+        scope: null,
+        workspaceAccess: null,
+        docker: null,
+        ssh: null
+      }
+    }
+  },
+  tools: {
+    elevated: {
+      enabled: false,
+      allowFrom: null
+    }
+  }
+}

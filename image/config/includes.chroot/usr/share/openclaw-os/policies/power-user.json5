@@ -1,0 +1,42 @@
+{
+  agents: {
+    defaults: {
+      sandbox: {
+        mode: "all",
+        backend: "docker",
+        scope: "agent",
+        workspaceAccess: "rw",
+        docker: {
+          image: "openclaw-sandbox:bookworm-slim",
+          network: "bridge",
+          readOnlyRoot: false,
+          tmpfs: ["/tmp", "/var/tmp", "/run"],
+          user: "0:0",
+          capDrop: [],
+          env: null,
+          setupCommand: null,
+          pidsLimit: null,
+          memory: null,
+          memorySwap: null,
+          cpus: null,
+          gpus: null,
+          ulimits: null,
+          seccompProfile: null,
+          apparmorProfile: null,
+          dns: null,
+          extraHosts: null,
+          binds: [],
+          dangerouslyAllowReservedContainerTargets: false,
+          dangerouslyAllowExternalBindSources: false,
+          dangerouslyAllowContainerNamespaceJoin: false
+        }
+      }
+    }
+  },
+  tools: {
+    elevated: {
+      enabled: false,
+      allowFrom: null
+    }
+  }
+}

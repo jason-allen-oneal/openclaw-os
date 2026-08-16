@@ -18,7 +18,7 @@ command_status() {
   local configured="no"
   config_exists && configured="yes"
   local gateway_state podman_state hostd_state controller_state
-  local bind port health controller_health latest_backup
+  local bind port health controller_health latest_backup managed_profile
   gateway_state="$(systemctl is-active openclaw.service 2>/dev/null || true)"
   podman_state="$(systemctl is-active openclaw-podman.service 2>/dev/null || true)"
   hostd_state="$(systemctl is-active openclaw-hostd.service 2>/dev/null || true)"
@@ -27,10 +27,14 @@ command_status() {
   port="18789"
   health="not-running"
   controller_health="not-running"
+  managed_profile="unmanaged"
 
   if config_exists; then
     bind="$(oc_get gateway.bind loopback)"
     port="$(oc_get gateway.port 18789)"
+  fi
+  if declare -F policy_state_profile >/dev/null 2>&1; then
+    managed_profile="$(policy_state_profile)"
   fi
   if [[ "$gateway_state" == "active" ]]; then
     if run_openclaw health --json --timeout 3000 2>/dev/null | jq -e '.ok == true' >/dev/null 2>&1; then
@@ -57,6 +61,7 @@ Debian base:       $DEBIAN_CODENAME
 Node.js:           $(/opt/node/current/bin/node --version 2>/dev/null || printf unavailable)
 OpenClaw:          $(current_openclaw_version)
 Configured:        $configured
+Execution profile: $managed_profile
 Gateway service:   ${gateway_state:-inactive}
 Gateway health:    $health
 Sandbox service:   ${podman_state:-inactive}

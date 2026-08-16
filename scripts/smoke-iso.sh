@@ -38,7 +38,6 @@ if [[ "$diagnostics_dir" != /* ]]; then
   diagnostics_dir="$PWD/$diagnostics_dir"
 fi
 
-rm -rf "$diagnostics_dir"
 mkdir -p "$diagnostics_dir"
 serial_log="$diagnostics_dir/serial.log"
 qemu_log="$diagnostics_dir/qemu.log"
@@ -46,6 +45,13 @@ metadata_file="$diagnostics_dir/metadata.txt"
 command_file="$diagnostics_dir/qemu-command.txt"
 exit_status_file="$diagnostics_dir/qemu.exit-status"
 outcome_file="$diagnostics_dir/outcome.txt"
+rm -f \
+  "$serial_log" \
+  "$qemu_log" \
+  "$metadata_file" \
+  "$command_file" \
+  "$exit_status_file" \
+  "$outcome_file"
 : >"$serial_log"
 : >"$qemu_log"
 
@@ -99,7 +105,7 @@ qemu_version="$(qemu-system-x86_64 --version | sed -n '1p')"
 
 qemu_command=(
   qemu-system-x86_64
-  -machine q35,accel=tcg
+  -machine "q35,accel=tcg"
   -cpu max
   -m 2048
   -smp 2
@@ -107,11 +113,11 @@ qemu_command=(
   -monitor none
   -serial "file:${serial_log}"
   -no-reboot
-  -boot order=d,menu=off,strict=on
+  -boot "order=d,menu=off,strict=on"
   -drive "if=pflash,format=raw,readonly=on,file=${ovmf_code}"
   -drive "if=pflash,format=raw,file=${vars_copy}"
   -drive "file=${ISO_PATH},media=cdrom,readonly=on,format=raw"
-  -nic user,model=virtio-net-pci
+  -nic "user,model=virtio-net-pci"
 )
 printf '%q ' "${qemu_command[@]}" >"$command_file"
 printf '\n' >>"$command_file"

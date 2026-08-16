@@ -120,15 +120,20 @@ jobs:
 
       - name: UEFI live-boot smoke test
         id: uefi_smoke
-        run: ./scripts/smoke-iso.sh dist/openclaw-os-$(cat VERSION)-amd64.iso
+        env:
+          SMOKE_DIAGNOSTICS_DIR: ${{ runner.temp }}/openclaw-os-uefi-smoke
+        run: |
+          rm -rf "$SMOKE_DIAGNOSTICS_DIR"
+          mkdir -p "$SMOKE_DIAGNOSTICS_DIR"
+          ./scripts/smoke-iso.sh "dist/openclaw-os-$(cat VERSION)-amd64.iso"
 
       - name: Upload UEFI smoke-test diagnostics
-        if: ${{ always() }}
+        if: ${{ always() && steps.uefi_smoke.outcome != 'skipped' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openclaw-os-uefi-smoke-${{ github.sha }}
-          path: dist/smoke-test/
-          if-no-files-found: warn
+          path: ${{ runner.temp }}/openclaw-os-uefi-smoke/
+          if-no-files-found: error
           retention-days: 14
 
       - name: Upload unverified ISO debug artifact

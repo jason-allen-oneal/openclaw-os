@@ -17,12 +17,16 @@ command_status() {
 
   local configured="no"
   config_exists && configured="yes"
-  local gateway_state podman_state bind port health latest_backup
+  local gateway_state podman_state hostd_state controller_state
+  local bind port health controller_health latest_backup
   gateway_state="$(systemctl is-active openclaw.service 2>/dev/null || true)"
   podman_state="$(systemctl is-active openclaw-podman.service 2>/dev/null || true)"
+  hostd_state="$(systemctl is-active openclaw-hostd.service 2>/dev/null || true)"
+  controller_state="$(systemctl is-active openclaw-controller.service 2>/dev/null || true)"
   bind="unknown"
   port="18789"
   health="not-running"
+  controller_health="not-running"
 
   if config_exists; then
     bind="$(oc_get gateway.bind loopback)"
@@ -35,23 +39,34 @@ command_status() {
       health="unhealthy"
     fi
   fi
+  if [[ "$controller_state" == "active" ]]; then
+    if curl --fail --silent --max-time 2 http://127.0.0.1:9080/healthz 2>/dev/null \
+      | jq -e '.ok == true and .service == "openclaw-controller"' >/dev/null 2>&1; then
+      controller_health="healthy"
+    else
+      controller_health="unhealthy"
+    fi
+  fi
 
   latest_backup="$(find /var/lib/openclaw/backups -maxdepth 1 -type f -name '*openclaw-backup.tar.gz' -printf '%T@ %f\n' 2>/dev/null | sort -nr | head -n 1 | cut -d' ' -f2- || true)"
   [[ -n "$latest_backup" ]] || latest_backup="none"
 
   cat <<STATUS
-OpenClaw OS:      $OPENCLAW_OS_VERSION
-Debian base:      $DEBIAN_CODENAME
-Node.js:          $(/opt/node/current/bin/node --version 2>/dev/null || printf unavailable)
-OpenClaw:         $(current_openclaw_version)
-Configured:       $configured
-Gateway service:  ${gateway_state:-inactive}
-Gateway health:   $health
-Sandbox service:  ${podman_state:-inactive}
-Gateway bind:     $bind
-Gateway port:     $port
-LAN addresses:    $(hostname -I 2>/dev/null | xargs || true)
-Latest backup:    $latest_backup
+OpenClaw OS:       $OPENCLAW_OS_VERSION
+Debian base:       $DEBIAN_CODENAME
+Node.js:           $(/opt/node/current/bin/node --version 2>/dev/null || printf unavailable)
+OpenClaw:          $(current_openclaw_version)
+Configured:        $configured
+Gateway service:   ${gateway_state:-inactive}
+Gateway health:    $health
+Sandbox service:   ${podman_state:-inactive}
+Host status svc:   ${hostd_state:-inactive}
+Controller svc:    ${controller_state:-inactive}
+Controller health: $controller_health
+Gateway bind:      $bind
+Gateway port:      $port
+LAN addresses:     $(hostname -I 2>/dev/null | xargs || true)
+Latest backup:     $latest_backup
 STATUS
 }
 
@@ -108,4 +123,3 @@ command_sandbox() {
     *) die "Unknown sandbox action: ${1:-}" ;;
   esac
 }
-

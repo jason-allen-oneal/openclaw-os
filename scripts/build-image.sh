@@ -7,6 +7,16 @@ IMAGE_DIR="$ROOT_DIR/image"
 DIST_DIR="$ROOT_DIR/dist"
 VERSION="$(<"$ROOT_DIR/VERSION")"
 LOG_FILE="$DIST_DIR/build-${VERSION}-${ARCH}.log"
+CONTROL_PLANE_DESTINATION="$IMAGE_DIR/config/includes.chroot/usr/lib/openclaw-os/control-plane"
+extract_dir=""
+
+cleanup() {
+  rm -rf "$CONTROL_PLANE_DESTINATION"
+  if [[ -n "$extract_dir" ]]; then
+    rm -rf "$extract_dir"
+  fi
+}
+trap cleanup EXIT
 
 # shellcheck disable=SC1091
 source "$ROOT_DIR/image/config/includes.chroot/usr/share/openclaw-os/release.env"
@@ -43,6 +53,7 @@ fi
 
 cd "$IMAGE_DIR"
 lb clean --purge >/dev/null 2>&1 || true
+"$ROOT_DIR/scripts/stage-control-plane.sh" "$CONTROL_PLANE_DESTINATION"
 ./auto/config
 
 set +e
@@ -75,21 +86,22 @@ install -m 0644 "$source_iso" "$target_iso"
 
 sbom_target="$DIST_DIR/openclaw-os-${VERSION}-${ARCH}.sbom.spdx.json"
 extract_dir="$(mktemp -d)"
-trap 'rm -rf "$extract_dir"' EXIT
 xorriso -osirrox on -indev "$target_iso" \
   -extract /live/filesystem.squashfs "$extract_dir/filesystem.squashfs" \
   >/dev/null 2>&1
 unsquashfs -cat "$extract_dir/filesystem.squashfs" \
   usr/share/openclaw-os/sbom.spdx.json >"$sbom_target"
-jq -e '.spdxVersion == "SPDX-2.3" and (.packages | length > 3)' "$sbom_target" >/dev/null
+jq -e '.spdxVersion == "SPDX-2.3" and (.packages | any(.SPDXID == "SPDXRef-OpenClawOSControlPlane"))' "$sbom_target" >/dev/null
 (
   cd "$DIST_DIR"
   sha256sum "$(basename "$sbom_target")" >"$(basename "$sbom_target").sha256"
 )
 
+control_plane_version="$(jq -er '.version' "$ROOT_DIR/package.json")"
 cat >"$DIST_DIR/openclaw-os-${VERSION}-${ARCH}.build.json" <<JSON
 {
   "openclawOsVersion": "$VERSION",
+  "controlPlaneVersion": "$control_plane_version",
   "architecture": "$ARCH",
   "debianCodename": "$DEBIAN_CODENAME",
   "nodeVersion": "$NODE_VERSION",

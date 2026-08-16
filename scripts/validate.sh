@@ -18,6 +18,15 @@ required_files=(
   VERSION
   README.md
   SECURITY.md
+  package.json
+  config/openclaw-compatibility.json
+  docs/adr/0001-openclaw-os-control-plane.md
+  packages/appliance-contracts/src/index.ts
+  packages/gateway-client/src/index.ts
+  services/controller/src/main.ts
+  services/controller/src/server.ts
+  services/hostd/src/main.ts
+  services/hostd/src/server.ts
   image/auto/config
   image/config/package-lists/openclaw-os.list.chroot
   image/config/hooks/normal/0100-install-runtime.hook.chroot
@@ -25,13 +34,22 @@ required_files=(
   image/config/hooks/normal/0980-generate-sbom.hook.chroot
   image/config/includes.chroot/usr/local/sbin/openclaw-appliance
   image/config/includes.chroot/usr/local/sbin/openclaw-console
+  image/config/includes.chroot/etc/openclaw/controller.env
   image/config/includes.chroot/etc/systemd/system/openclaw.service
   image/config/includes.chroot/etc/systemd/system/openclaw-podman.service
+  image/config/includes.chroot/etc/systemd/system/openclaw-hostd.service
+  image/config/includes.chroot/etc/systemd/system/openclaw-controller.service
   image/config/includes.chroot/etc/systemd/system/openclaw-boot-marker.service
+  image/config/includes.chroot/usr/libexec/openclaw-appliance/gateway-run
+  image/config/includes.chroot/usr/libexec/openclaw-appliance/gateway-credential.sh
   image/config/includes.chroot/usr/share/openclaw-os/release.env
+  scripts/stage-control-plane.sh
+  scripts/test-control-plane.sh
   scripts/verify-artifacts.sh
   scripts/smoke-iso.sh
   tests/appliance-test.sh
+  tests/control-plane/gateway-client.test.ts
+  tests/control-plane/hostd.test.ts
 )
 for relative_path in "${required_files[@]}"; do
   [[ -f "$ROOT_DIR/$relative_path" ]] || fail "missing $relative_path"
@@ -62,7 +80,15 @@ if command -v shellcheck >/dev/null 2>&1; then
     "$ROOT_DIR/image/config/includes.chroot/usr/local/bin" \
     "$ROOT_DIR/image/config/includes.chroot/usr/local/sbin" \
     "$ROOT_DIR/image/config/includes.chroot/usr/libexec/openclaw-appliance" \
-    -type f -print0)
+    -type f \( \
+      -name '*.sh' \
+      -o -path '*/auto/config' \
+      -o -path '*/auto/clean' \
+      -o -path '*/hooks/normal/*.hook.chroot' \
+      -o -path '*/usr/local/bin/*' \
+      -o -path '*/usr/local/sbin/*' \
+      -o -path '*/usr/libexec/openclaw-appliance/*' \
+    \) -print0)
   if ! shellcheck -x -e SC1091,SC2154,SC2317,SC2329 "${shell_files[@]}"; then
     fail "shellcheck reported errors"
   fi
@@ -83,6 +109,40 @@ source "$ROOT_DIR/image/config/includes.chroot/usr/share/openclaw-os/release.env
 [[ "$OPENCLAW_TARBALL_URL" == "https://registry.npmjs.org/openclaw/-/openclaw-${OPENCLAW_VERSION}.tgz" ]] || fail "unexpected OpenClaw tarball URL"
 [[ "$OPENCLAW_RELEASE_COMMIT" =~ ^[a-f0-9]{40}$ ]] || fail "invalid OpenClaw release commit"
 
+note "checking control-plane compatibility contract"
+compatibility="$ROOT_DIR/config/openclaw-compatibility.json"
+package_file="$ROOT_DIR/package.json"
+jq -e --arg version "$(<"$ROOT_DIR/VERSION")" '.openclawOsVersion == $version' "$compatibility" >/dev/null \
+  || fail "control-plane manifest does not match OpenClaw OS VERSION"
+jq -e --arg version "$OPENCLAW_VERSION" '.testedOpenclawVersions | index($version) != null' "$compatibility" >/dev/null \
+  || fail "pinned OpenClaw version is not in the tested compatibility set"
+jq -e '
+  .schemaVersion == 1 and
+  .controlPlanePhase == 1 and
+  .gatewayProtocol.minimum == 4 and
+  .gatewayProtocol.maximum == 4 and
+  .gatewayProtocol.requiredMethods == ["health"] and
+  .gatewayProtocol.operatorScopes == ["operator.read"]
+' "$compatibility" >/dev/null || fail "control-plane compatibility policy is invalid"
+jq -e '
+  .private == true and
+  .type == "module" and
+  (.engines.node | startswith(">=24")) and
+  ((.dependencies // {}) | length == 0) and
+  ((.optionalDependencies // {}) | length == 0)
+' "$package_file" >/dev/null || fail "control-plane package must be private and dependency-free"
+
+grep -q 'OPENCLAW_OPERATOR_SCOPES = \["operator.read"\]' \
+  "$ROOT_DIR/packages/gateway-client/src/index.ts" \
+  || fail "Gateway client must request only operator.read"
+grep -q 'READ_ONLY_GATEWAY_METHODS' "$ROOT_DIR/packages/gateway-client/src/index.ts" \
+  || fail "Gateway client read-only method registry is missing"
+if grep -RInE --include='*.ts' \
+  'operation:[[:space:]]*"(exec|shell|command\.run|service\.(start|stop|restart))"' \
+  "$ROOT_DIR/packages" "$ROOT_DIR/services"; then
+  fail "control-plane source contains a forbidden host mutation operation"
+fi
+
 note "checking OpenClaw appliance policy"
 default_patch="$ROOT_DIR/image/config/includes.chroot/usr/share/openclaw-os/defaults/openclaw.patch.json5"
 grep -q 'checkOnStart: false' "$default_patch" || fail "OpenClaw startup update checks must be disabled"
@@ -99,15 +159,46 @@ grep -q '^RestartPreventExitStatus=78$' "$unit" || fail "Gateway service must st
 grep -q '^ProtectSystem=strict$' "$unit" || fail "Gateway service must protect the system tree"
 grep -q '^CapabilityBoundingSet=$' "$unit" || fail "Gateway service must drop capabilities"
 grep -q 'ConditionPathExists=/var/lib/openclaw/state/openclaw.json' "$unit" || fail "Gateway must not start before onboarding"
+grep -q 'ConditionPathExists=/etc/openclaw/gateway-token' "$unit" || fail "Gateway must fail closed without its credential"
+grep -q '^LoadCredential=gateway-token:/etc/openclaw/gateway-token$' "$unit" || fail "Gateway token must use a systemd credential"
+grep -q '^ExecStart=/usr/libexec/openclaw-appliance/gateway-run$' "$unit" || fail "Gateway must start through the credential wrapper"
+
 podman_unit="$ROOT_DIR/image/config/includes.chroot/etc/systemd/system/openclaw-podman.service"
 grep -q '^User=openclaw$' "$podman_unit" || fail "Podman service must use openclaw user"
 grep -q '^Delegate=yes$' "$podman_unit" || fail "Podman service must receive delegated cgroups"
 grep -q 'AF_PACKET' "$podman_unit" || fail "Podman service needs AF_PACKET for container networking"
+
+hostd_unit="$ROOT_DIR/image/config/includes.chroot/etc/systemd/system/openclaw-hostd.service"
+grep -q '^User=openclaw-hostd$' "$hostd_unit" || fail "hostd must use its own service account"
+grep -q '^Group=openclaw-control$' "$hostd_unit" || fail "hostd must use the control-plane group"
+grep -q '^RestrictAddressFamilies=AF_UNIX$' "$hostd_unit" || fail "hostd must be restricted to Unix sockets"
+grep -q '^CapabilityBoundingSet=$' "$hostd_unit" || fail "hostd must have no Linux capabilities in phase 1"
+grep -q '^NoNewPrivileges=yes$' "$hostd_unit" || fail "hostd must set NoNewPrivileges"
+
+controller_unit="$ROOT_DIR/image/config/includes.chroot/etc/systemd/system/openclaw-controller.service"
+grep -q '^User=openclaw-controller$' "$controller_unit" || fail "controller must use its own service account"
+grep -q '^Group=openclaw-control$' "$controller_unit" || fail "controller must use the control-plane group"
+grep -q '^IPAddressDeny=any$' "$controller_unit" || fail "controller network policy must default deny"
+grep -q '^IPAddressAllow=localhost$' "$controller_unit" || fail "controller network policy must allow loopback only"
+grep -q '^SocketBindAllow=tcp:9080$' "$controller_unit" || fail "controller must bind only its fixed API port"
+grep -q '^LoadCredential=gateway-token:/etc/openclaw/gateway-token$' "$controller_unit" || fail "controller must receive its own systemd credential copy"
+grep -q '^NoNewPrivileges=yes$' "$controller_unit" || fail "controller must set NoNewPrivileges"
+
 console_unit="$ROOT_DIR/image/config/includes.chroot/etc/systemd/system/openclaw-console.service"
 grep -q '^Before=getty@tty1.service$' "$console_unit" || fail "appliance console must start before tty1 getty"
 configure_hook="$ROOT_DIR/image/config/hooks/normal/0200-configure-appliance.hook.chroot"
 grep -q 'systemctl enable openclaw-boot-marker.service' "$configure_hook" || fail "boot marker service is not enabled"
+grep -q 'systemctl enable openclaw-hostd.service' "$configure_hook" || fail "hostd service is not enabled"
+grep -q 'systemctl enable openclaw-controller.service' "$configure_hook" || fail "controller service is not enabled"
 grep -q 'systemctl mask ssh.service ssh.socket' "$configure_hook" || fail "SSH must be masked in the image"
+
+setup_module="$ROOT_DIR/image/config/includes.chroot/usr/libexec/openclaw-appliance/commands/gateway-access-setup.sh"
+grep -q -- '--gateway-token-ref-env OPENCLAW_GATEWAY_TOKEN' "$setup_module" \
+  || fail "onboarding must store the Gateway token as a SecretRef"
+grep -q -- '--suppress-gateway-token-output' "$setup_module" \
+  || fail "onboarding must suppress token-bearing output"
+grep -q 'openclaw_ensure_gateway_credential' "$setup_module" \
+  || fail "setup must create the Gateway credential before onboarding"
 
 note "checking pinned container bases"
 containerfile="$ROOT_DIR/image/config/includes.chroot/usr/share/openclaw-os/sandbox/Containerfile"
@@ -146,21 +237,46 @@ done < <(find \
   "$ROOT_DIR/image/config/includes.chroot/usr/local/bin" \
   "$ROOT_DIR/image/config/includes.chroot/usr/local/sbin" \
   "$ROOT_DIR/image/config/includes.chroot/usr/libexec/openclaw-appliance" \
-  -type f -print0)
+  -type f \( \
+    -name '*.sh' \
+    -o -path '*/auto/config' \
+    -o -path '*/auto/clean' \
+    -o -path '*/hooks/normal/*.hook.chroot' \
+    -o -path '*/usr/local/bin/*' \
+    -o -path '*/usr/local/sbin/*' \
+    -o -path '*/usr/libexec/openclaw-appliance/*' \
+  \) -print0)
+
+note "staging control-plane source"
+stage_root="$(mktemp -d)"
+test_root=""
+trap 'rm -rf "$stage_root" "${test_root:-}"' EXIT
+if ! "$ROOT_DIR/scripts/stage-control-plane.sh" "$stage_root/control-plane"; then
+  fail "control-plane staging failed"
+elif find "$stage_root/control-plane" -type l -print -quit | grep -q .; then
+  fail "staged control plane contains a symbolic link"
+elif [[ ! -f "$stage_root/control-plane/services/controller/src/main.ts" ]]; then
+  fail "staged control plane is incomplete"
+fi
 
 note "running appliance unit tests"
 if ! "$ROOT_DIR/tests/appliance-test.sh"; then
   fail "appliance unit tests failed"
 fi
 
+note "running control-plane tests"
+if ! "$ROOT_DIR/scripts/test-control-plane.sh"; then
+  fail "control-plane tests failed"
+fi
+
 note "testing firewall grammar"
 test_root="$(mktemp -d)"
-trap 'rm -rf "$test_root"' EXIT
 mkdir -p "$test_root/etc/openclaw"
 printf '22\n' >"$test_root/etc/openclaw/allowed-tcp-ports"
 printf '18789\n' >"$test_root/etc/openclaw/allowed-lan-tcp-ports"
 if ! OPENCLAW_ROOT="$test_root" \
   OPENCLAW_LIB="$ROOT_DIR/image/config/includes.chroot/usr/libexec/openclaw-appliance/lib.sh" \
+  OPENCLAW_CREDENTIAL_HELPER="$ROOT_DIR/image/config/includes.chroot/usr/libexec/openclaw-appliance/gateway-credential.sh" \
   "$ROOT_DIR/image/config/includes.chroot/usr/local/sbin/openclaw-appliance" firewall render --no-apply; then
   fail "firewall renderer failed"
 elif ! grep -q 'elements = { 22 }' "$test_root/etc/nftables.conf" || ! grep -q 'elements = { 18789 }' "$test_root/etc/nftables.conf"; then

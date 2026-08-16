@@ -25,28 +25,36 @@ run_screen() {
 menu_choice() {
   local title="$1"
   shift
-  whiptail --title "$title" --menu "$title" 24 82 16 "$@" 3>&1 1>&2 2>&3
+  whiptail --title "$title" --menu "$title" 24 84 16 "$@" 3>&1 1>&2 2>&3
 }
 
 input_value() {
   local title="$1"
   local prompt="$2"
   local default_value="${3:-}"
-  whiptail --title "$title" --inputbox "$prompt" 10 76 "$default_value" 3>&1 1>&2 2>&3
+  whiptail --title "$title" --inputbox "$prompt" 11 76 "$default_value" 3>&1 1>&2 2>&3
+}
+
+confirm_risk() {
+  local title="$1"
+  local message="$2"
+  whiptail --title "$title" --yesno "$message" 13 78
 }
 
 status_summary() {
-  local gateway configured version bind address
+  local gateway configured version bind address profile
   gateway="$(systemctl is-active openclaw.service 2>/dev/null || true)"
   [[ -f /var/lib/openclaw/state/openclaw.json ]] && configured=yes || configured=no
   version="$(readlink -f /opt/openclaw/current 2>/dev/null | xargs basename 2>/dev/null || printf unavailable)"
   bind="unknown"
+  profile="unmanaged"
   if [[ "$configured" == yes ]]; then
     bind="$(openclaw config get gateway.bind 2>/dev/null || printf loopback)"
+    profile="$(openclaw-appliance policy status --json 2>/dev/null | jq -r '.profile // "unmanaged"' || printf unmanaged)"
   fi
   address="$(hostname -I 2>/dev/null | xargs || true)"
-  printf 'OpenClaw %s | Configured: %s | Gateway: %s | Bind: %s\nAddresses: %s' \
-    "$version" "$configured" "${gateway:-inactive}" "$bind" "${address:-none}"
+  printf 'OpenClaw %s | Configured: %s | Gateway: %s\nProfile: %s | Bind: %s\nAddresses: %s' \
+    "$version" "$configured" "${gateway:-inactive}" "$profile" "$bind" "${address:-none}"
 }
 
 show_gateway_menu() {
@@ -71,7 +79,7 @@ show_access_menu() {
   choice="$(menu_choice "Control UI access" \
     1 "Show current access mode" \
     2 "Loopback only" \
-    3 "Authenticated LAN access")" || return 0
+    3 "Authenticated private-network access")" || return 0
   case "$choice" in
     1) run_screen openclaw-appliance access status ;;
     2) run_screen openclaw-appliance access loopback ;;
@@ -92,6 +100,53 @@ show_sandbox_menu() {
   esac
 }
 
+apply_policy_profile() {
+  local profile="$1"
+  local description="$2"
+  if [[ "$profile" == "locked" ]]; then
+    run_screen openclaw-appliance policy apply locked
+    return 0
+  fi
+  if confirm_risk "Execution policy: $profile" \
+    "$description\n\nThis weakens isolation. Apply the $profile profile?"; then
+    run_screen openclaw-appliance policy apply "$profile" --acknowledge-risk
+  fi
+}
+
+show_policy_menu() {
+  local choice provider sender
+  choice="$(menu_choice "OpenClaw execution policy" \
+    1 "Show effective policy" \
+    2 "List installed profiles" \
+    3 "Apply locked profile" \
+    4 "Apply connected profile" \
+    5 "Apply developer profile" \
+    6 "Apply power-user profile" \
+    7 "Apply host profile" \
+    8 "Enable elevated exec for one sender" \
+    9 "Disable elevated exec")" || return 0
+  case "$choice" in
+    1) run_screen openclaw-appliance policy status ;;
+    2) run_screen openclaw-appliance policy list ;;
+    3) apply_policy_profile locked "No sandbox network, read-only root, all capabilities dropped." ;;
+    4) apply_policy_profile connected "Adds outbound bridge networking to the rootless sandbox." ;;
+    5) apply_policy_profile developer "Adds networking and a writable rootless sandbox filesystem." ;;
+    6) apply_policy_profile power-user "Runs tools as container UID 0 with default rootless container capabilities." ;;
+    7) apply_policy_profile host "Disables the agent sandbox. Commands run as the unprivileged openclaw service account." ;;
+    8)
+      provider="$(input_value "Elevated exec" "Channel/provider id, such as discord or whatsapp:" "")" || return 0
+      [[ -n "$provider" ]] || return 0
+      sender="$(input_value "Elevated exec" "Exact trusted sender identity:" "")" || return 0
+      [[ -n "$sender" ]] || return 0
+      if confirm_risk "Elevated exec" \
+        "This sender may request host execution outside the sandbox, subject to OpenClaw approval policy. Enable it?"; then
+        run_screen openclaw-appliance policy elevated enable "$provider" "$sender" --acknowledge-risk
+      fi
+      ;;
+    9) run_screen openclaw-appliance policy elevated disable ;;
+  esac
+}
+
 show_audit_menu() {
   local choice
   choice="$(menu_choice "Audit" \
@@ -107,59 +162,64 @@ show_audit_menu() {
   esac
 }
 
+apply_staged_update() {
+  local -a args=(openclaw-appliance update apply)
+  if [[ -f /var/lib/openclaw/state/openclaw.json ]] \
+    && ! systemctl is-active --quiet openclaw.service; then
+    if ! confirm_risk "Apply while stopped" \
+      "The Gateway is stopped, so the candidate cannot be runtime health-checked. Switch the staged code and leave the Gateway stopped?"; then
+      return 0
+    fi
+    args+=(--allow-stopped)
+  fi
+  run_screen "${args[@]}"
+}
+
+rollback_release() {
+  local -a args=(openclaw-appliance rollback)
+  if [[ -f /var/lib/openclaw/state/openclaw.json ]] \
+    && ! systemctl is-active --quiet openclaw.service; then
+    if ! confirm_risk "Rollback while stopped" \
+      "The Gateway is stopped, so the rollback target cannot be runtime health-checked. Switch code and leave the Gateway stopped?"; then
+      return 0
+    fi
+    args+=(--allow-stopped)
+  fi
+  run_screen "${args[@]}"
+}
+
 show_update_menu() {
   local choice target
-  choice="$(menu_choice "OpenClaw releases" \
-    1 "Show update and compatibility status" \
-    2 "Check extended-stable without changing the system" \
+  choice="$(menu_choice "Safe OpenClaw upgrades" \
+    1 "Show update status" \
+    2 "Check extended-stable without changing anything" \
     3 "Stage an exact tested version" \
-    4 "Apply the staged tested version" \
-    5 "Cancel staged activation" \
-    6 "Stage an untested exact version" \
-    7 "Apply the staged untested version" \
-    8 "List installed releases" \
-    9 "Roll back to an installed version")" || return 0
+    4 "Stage an exact untested version" \
+    5 "Apply the staged version" \
+    6 "Cancel staged activation" \
+    7 "List installed releases" \
+    8 "Roll back to previous known-good release" \
+    9 "Recover an interrupted activation")" || return 0
   case "$choice" in
     1) run_screen openclaw-appliance update status ;;
     2) run_screen openclaw-appliance update check extended-stable ;;
     3)
-      target="$(input_value "Stage OpenClaw" "Exact version reported as tested by the update check:" "")" || return 0
+      target="$(input_value "Stage OpenClaw" "Exact version from the update check:" "")" || return 0
       [[ -n "$target" ]] && run_screen openclaw-appliance update stage "$target"
       ;;
     4)
-      if whiptail --title "Apply staged OpenClaw" --yesno \
-        "Create a verified backup and activate the exact staged release? A running Gateway will restart." 10 72; then
-        run_screen openclaw-appliance update apply
-      fi
-      ;;
-    5)
-      if whiptail --title "Cancel staged activation" --yesno \
-        "Clear pending activation metadata? The inactive code release will remain installed until pruning." 10 72; then
-        run_screen openclaw-appliance update cancel
-      fi
-      ;;
-    6)
-      target="$(input_value "Stage untested OpenClaw" "Exact version only. This release is outside the tested compatibility set:" "")" || return 0
-      if [[ -n "$target" ]] && whiptail --title "Untested release" --yesno \
-        "Stage OpenClaw $target without an OpenClaw OS compatibility guarantee?" 10 72; then
+      target="$(input_value "Stage untested OpenClaw" "Exact untested version:" "")" || return 0
+      [[ -n "$target" ]] || return 0
+      if confirm_risk "Untested OpenClaw" \
+        "This release is outside the appliance compatibility set and may migrate state incompatibly. Stage it anyway?"; then
         run_screen openclaw-appliance update stage "$target" --allow-untested
       fi
       ;;
-    7)
-      if whiptail --title "Apply untested release" --yesno \
-        "Activate the exact staged untested release? Code rollback cannot guarantee reversal of state migrations." 10 72; then
-        run_screen openclaw-appliance update apply --allow-untested
-      fi
-      ;;
-    8) run_screen openclaw-appliance releases ;;
-    9)
-      target="$(input_value "Roll back OpenClaw" "Installed version. Leave blank for the newest inactive release:" "")" || return 0
-      if [[ -n "$target" ]]; then
-        run_screen openclaw-appliance rollback "$target"
-      else
-        run_screen openclaw-appliance rollback
-      fi
-      ;;
+    5) apply_staged_update ;;
+    6) run_screen openclaw-appliance update cancel ;;
+    7) run_screen openclaw-appliance releases ;;
+    8) rollback_release ;;
+    9) run_screen openclaw-appliance update recover ;;
   esac
 }
 
@@ -181,45 +241,47 @@ while true; do
   choice="$(whiptail \
     --title "OpenClaw OS" \
     --menu "$summary" \
-    24 82 15 \
+    26 88 17 \
     1 "Appliance status" \
     2 "Run OpenClaw setup or repair" \
     3 "Gateway controls" \
-    4 "Control UI access" \
-    5 "Network configuration" \
-    6 "Tool sandbox" \
-    7 "Create verified backup" \
-    8 "Configuration and security audits" \
-    9 "OpenClaw update and rollback" \
-    10 "SSH controls" \
-    11 "Gateway logs" \
-    12 "Switch to maintenance login on tty2" \
-    13 "Reboot appliance" \
-    14 "Shut down appliance" \
+    4 "OpenClaw execution policy" \
+    5 "Control UI access" \
+    6 "Network configuration" \
+    7 "Tool sandbox" \
+    8 "Create verified backup" \
+    9 "Configuration and security audits" \
+    10 "Safe OpenClaw upgrade and rollback" \
+    11 "SSH controls" \
+    12 "Gateway logs" \
+    13 "Switch to maintenance login on tty2" \
+    14 "Reboot appliance" \
+    15 "Shut down appliance" \
     3>&1 1>&2 2>&3)" || choice=""
 
   case "$choice" in
     1) run_screen openclaw-appliance status ;;
     2) run_screen openclaw-appliance setup ;;
     3) show_gateway_menu ;;
-    4) show_access_menu ;;
-    5) clear; nmtui || true ;;
-    6) show_sandbox_menu ;;
-    7) run_screen openclaw-appliance backup ;;
-    8) show_audit_menu ;;
-    9) show_update_menu ;;
-    10) show_ssh_menu ;;
-    11) run_screen openclaw-appliance logs 250 ;;
-    12)
+    4) show_policy_menu ;;
+    5) show_access_menu ;;
+    6) clear; nmtui || true ;;
+    7) show_sandbox_menu ;;
+    8) run_screen openclaw-appliance backup ;;
+    9) show_audit_menu ;;
+    10) show_update_menu ;;
+    11) show_ssh_menu ;;
+    12) run_screen openclaw-appliance logs 250 ;;
+    13)
       systemctl start getty@tty2.service >/dev/null 2>&1 || true
       chvt 2
       ;;
-    13)
+    14)
       if whiptail --title "Reboot" --yesno "Reboot OpenClaw OS now?" 8 50; then
         systemctl reboot
       fi
       ;;
-    14)
+    15)
       if whiptail --title "Shutdown" --yesno "Shut down OpenClaw OS now?" 8 50; then
         systemctl poweroff
       fi

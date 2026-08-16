@@ -27,6 +27,8 @@ load_release_env() {
 }
 load_appliance_config() {
   UPDATE_CHANNEL=extended-stable
+  # Consumed by the sourced release-pruning function.
+  # shellcheck disable=SC2034
   KEEP_OPENCLAW_RELEASES=3
   OPENCLAW_UPDATE_POLICY=tested-only
   if [[ -r "$APPLIANCE_CONFIG_FILE" ]]; then

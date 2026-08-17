@@ -3,15 +3,40 @@
 OpenClaw OS is a Debian 13 appliance distribution dedicated to running
 OpenClaw as an always-on, single-operator gateway.
 
-The repository builds an installable amd64 hybrid ISO with a pinned Node.js 24
-LTS runtime, a pinned OpenClaw extended-stable release, a hardened systemd
-service, rootless Podman-backed tool sandboxes, nftables, verified backups,
-periodic security checks, staged OpenClaw upgrades, automatic code rollback, an
-SPDX SBOM, and a local appliance console.
+It is designed for people who want an OpenClaw system that can be installed on
+a mini PC or virtual machine, administered without maintaining a general-purpose
+Linux server, upgraded without replacing the working release blindly, and
+recovered when an update or configuration fails.
 
-The build never reads from a developer's OpenClaw checkout or home-directory
-OpenClaw state. It downloads exact upstream artifacts into an isolated image
-build and validates them before installation.
+## Current status
+
+Version `0.1.0` is a technical alpha for amd64 virtual machines and lab systems.
+It is not yet a stable production appliance.
+
+Implemented today:
+
+- installable Debian 13 `trixie` hybrid ISO
+- pinned Node.js 24 LTS and pinned OpenClaw extended-stable release
+- unprivileged OpenClaw Gateway service
+- rootless Podman-backed tool sandboxes
+- nftables default-deny inbound policy
+- local appliance console and maintenance CLI
+- locked, connected, developer, power-user, and host-control profiles
+- verified backups and periodic audits
+- opt-in staged OpenClaw updates with code rollback and failed-candidate quarantine
+- SPDX 2.3 SBOM and artifact checksums
+- UEFI QEMU boot verification with retained failure diagnostics
+- machine-readable alpha, beta, and stable promotion policy
+
+Still required before a stable release:
+
+- automated blank-disk installation and upgrade testing
+- production release-signing trust
+- evidence-backed OpenClaw compatibility records
+- transactional base-OS rollback
+- Secure Boot signing and tamper rejection testing
+- physical hardware coverage
+- repository protection and canonical metadata applied through GitHub settings
 
 ## Current pins
 
@@ -23,28 +48,23 @@ build and validates them before installation.
 | OpenClaw | 2026.6.34 extended-stable |
 | Sandbox base | Debian 12 bookworm-slim, digest pinned |
 
-The Node.js archives are checked against pinned SHA-256 values. OpenClaw is
-checked against the npm registry SHA-512 SRI, the package version, the exact
-registry tarball URL, published registry signature metadata, the corresponding
-GitHub release SRI, and the pinned release commit used by the image.
+The build never reads from a developer OpenClaw checkout or home-directory
+OpenClaw state. It downloads exact upstream artifacts in an isolated image
+build and verifies their hashes, integrity metadata, package identity, and
+release metadata before installation.
 
-## Implemented appliance behavior
+## Security and privilege model
 
-OpenClaw runs as the unprivileged `openclaw` system account. The Gateway cannot
-write to `/opt`, `/usr`, or `/etc`. Its active state and configuration live in
-`/var/lib/openclaw`, while agent workspaces live in `/srv/openclaw`.
+OpenClaw runs as the unprivileged `openclaw` system account. Its mutable state
+lives under `/var/lib/openclaw`, and workspaces live under `/srv/openclaw`.
+The Gateway cannot write to `/opt`, `/usr`, or `/etc`.
 
-The Gateway binds to loopback by default. Inbound traffic is denied by nftables
-unless the operator explicitly permits a port. The appliance LAN command opens
-the Gateway only to private IPv4, carrier-grade NAT or tailnet, IPv6 ULA, and
-IPv6 link-local source ranges. It also requires token or password authentication
-before changing the bind mode. SSH is installed but disabled. Enabling SSH
-requires an authorized key, and both root login and password authentication are
+The Gateway binds to loopback by default. Inbound traffic is denied unless the
+operator explicitly permits it. SSH is installed but disabled. Enabling SSH
+requires a public key, and root login and password authentication remain
 disabled.
 
-OpenClaw's Docker sandbox backend is routed through a compatibility wrapper to
-a rootless Podman API service owned by the `openclaw` account. The initial
-sandbox policy is:
+The default sandbox policy is:
 
 ```text
 mode: all
@@ -55,9 +75,22 @@ readOnlyRoot: true
 capDrop: ALL
 ```
 
-The Gateway remains on the host. Rootless containers, systemd restrictions,
-and the firewall reduce impact, but they do not create a hostile multi-tenant
-security boundary.
+OpenClaw OS also includes explicit privilege profiles:
+
+| Profile | Intended use |
+| --- | --- |
+| `locked` | chat and tightly restricted workspace activity |
+| `connected` | sandboxed tools with controlled network access |
+| `developer` | development tools and broader workspace access |
+| `power-user` | advanced OpenClaw capabilities with explicit operator acknowledgement |
+| `host` | narrowly approved host-control operations through the appliance boundary |
+
+Profiles are visible configuration, not hidden security claims. Rootless
+containers, systemd hardening, and the firewall reduce blast radius, but they do
+not provide hostile multi-tenant isolation. The supported model is one trusted
+operator per appliance.
+
+See [`docs/POLICIES.md`](docs/POLICIES.md) for the exact profile behavior.
 
 ## Build on Debian 13
 
@@ -73,8 +106,8 @@ sudo apt install --yes \
   qemu-system-x86 ovmf
 ```
 
-Validate source and upstream pins, run the tests, then build and smoke-test the
-ISO:
+Validate the source, test the appliance, verify upstream artifacts, build the
+ISO, and boot it under UEFI QEMU:
 
 ```bash
 make validate
@@ -94,40 +127,41 @@ dist/openclaw-os-0.1.0-amd64.sbom.spdx.json.sha256
 dist/openclaw-os-0.1.0-amd64.build.json
 ```
 
-The GitHub Actions build uses a digest-pinned Debian 13 container with Debian's
-current `live-build`, then boots the resulting ISO under UEFI QEMU and waits for
-the `OPENCLAW_OS_BOOT_OK` readiness marker. The workflow uploads the ISO, SBOM,
-checksums, build metadata, and build log as one artifact.
+The verified GitHub Actions artifact is uploaded only after the generated GRUB
+configuration and the UEFI live-boot marker pass. Failed checks retain serial,
+QEMU, firmware, and image diagnostics, plus an explicitly unverified debug ISO.
 
 ## Install and first boot
 
-Boot the ISO and use the included Debian installer. After the installed system
-reboots, OpenClaw OS starts its appliance console on `tty1`. A standard Linux
-maintenance login remains available on `tty2`.
+Boot the ISO and use the included Debian installer. After reboot, OpenClaw OS
+starts the appliance console on `tty1`. A maintenance login remains available
+on `tty2`.
 
-The appliance console can:
+The console and CLI can:
 
-- Run OpenClaw onboarding without installing a competing user service.
-- Build the pinned rootless sandbox image.
-- Start, stop, restart, and inspect the Gateway.
-- Switch Control UI access between loopback and authenticated LAN mode.
-- Configure networking through `nmtui`.
-- Enable or disable key-only SSH.
-- Create and verify OpenClaw backups.
-- Run configuration, secret, and security audits.
-- Check, stage, apply, cancel, and roll back OpenClaw releases.
+- run OpenClaw onboarding without installing a competing user service
+- build the pinned rootless sandbox image
+- start, stop, restart, and inspect the Gateway
+- switch Control UI access between loopback and authenticated private-LAN mode
+- configure networking
+- enable or disable key-only SSH
+- create and verify backups
+- run configuration, secret, and security audits
+- select and inspect privilege profiles
+- check, stage, apply, cancel, and roll back OpenClaw releases
 
-The same operations are available from a maintenance shell:
+Common maintenance commands:
 
 ```bash
 sudo openclaw-appliance status
 sudo openclaw-appliance setup
 sudo openclaw-appliance sandbox build
+sudo openclaw-appliance policy status
+sudo openclaw-appliance policy apply developer
 sudo openclaw-appliance access lan
 sudo openclaw-appliance backup
 sudo openclaw-appliance audit deep
 sudo openclaw-appliance update status
-sudo openclaw-appliance update check extended-stable
 sudo openclaw-appliance releases
 ```
 
@@ -136,11 +170,11 @@ state directory.
 
 ## Safe OpenClaw upgrades
 
-Debian security updates are handled by unattended-upgrades. OpenClaw's own
-startup update check and background auto-update remain disabled because the
-appliance owns the OpenClaw code transaction.
+Debian security updates are handled separately by unattended-upgrades.
+OpenClaw startup update checks and background auto-update are disabled because
+the appliance owns the OpenClaw code transaction.
 
-OpenClaw upgrades are split into reviewable phases:
+Upgrades are opt-in and split into reviewable phases:
 
 ```bash
 sudo openclaw-appliance update check extended-stable
@@ -149,60 +183,74 @@ sudo openclaw-appliance update status
 sudo openclaw-appliance update apply
 ```
 
-`check` verifies npm and GitHub release metadata without changing the system.
-`stage` installs and validates an exact candidate under
-`/opt/openclaw/releases/<version>` without switching the active symlink or
-restarting the Gateway. `apply` uses the recorded exact staged release, creates
-a verified backup, switches the symlink, and runs a health check. It preserves
-whether the Gateway was running or stopped before the transaction.
+`check` is read-only. `stage` downloads, verifies, installs, and validates an
+exact candidate without changing the active release or restarting the Gateway.
+`apply` creates a verified backup, records the previous known-good release,
+activates the staged version, verifies the running version and service health,
+and restores the prior release automatically if activation fails.
 
-By default, only versions in `config/openclaw-compatibility.json` may be staged
-or activated. A power user can test an unlisted release only by naming the exact
-version and supplying `--allow-untested`. Moving npm tags cannot use that
-exception.
+Only versions in `config/openclaw-compatibility.json` are accepted by default.
+A power user can name an exact unlisted version with `--allow-untested`. This
+override does not bypass artifact verification, backup creation, health checks,
+rollback, or failed-release quarantine.
 
-If candidate validation or health checking fails, OpenClaw OS restores the prior
-code symlink and prior Gateway service state. Code rollback does not
-automatically rewind OpenClaw state. The pre-activation verified backup remains
-available because restoring state can rewind credentials, channel ratchets,
-approvals, delivery queues, conversations, and workspaces.
+Code rollback does not automatically rewind OpenClaw state. The pre-activation
+backup remains available because automatic state rollback could rewind
+credentials, approvals, channel state, conversations, or delivery queues.
 
-The full operating procedure and failure model are in
-[`docs/UPDATES.md`](docs/UPDATES.md).
+See [`docs/UPDATES.md`](docs/UPDATES.md) for the transaction and recovery model.
+
+## Release promotion
+
+OpenClaw OS promotes the same tested artifact through alpha, beta, and stable.
+It does not rebuild an ISO during promotion.
+
+Validate the policy and tests with:
+
+```bash
+make release-policy
+make test-release-gate
+```
+
+Release evidence can be evaluated with:
+
+```bash
+node scripts/release-gate.mjs evidence \
+  config/release-promotion-policy.json \
+  path/to/release-evidence.json
+```
+
+The gate checks artifact identity, CI status, evidence freshness, soak period,
+blocker state, approvals, release notes, and rollback information. Waivers are
+not accepted. See [`docs/RELEASES.md`](docs/RELEASES.md).
 
 ## Backups and audits
 
-A daily systemd timer runs `openclaw backup create --verify`. Backups are stored
-under `/var/lib/openclaw/backups` with a default 30-day retention policy.
+A daily timer runs `openclaw backup create --verify`. Backups are stored under
+`/var/lib/openclaw/backups` with a default 30-day retention policy.
 
-A weekly timer writes configuration validation, `secrets audit --check`, and
-security audit output under `/var/log/openclaw/audits`. Deep live audits can be
-started manually through the console or CLI.
+A weekly timer records configuration validation, secret audit, and security
+audit results under `/var/log/openclaw/audits`. Backups may contain credentials,
+channel state, conversations, and workspace data, so exported copies require
+encryption and access controls equivalent to the running appliance.
 
-Backups can contain credentials, channel state, conversations, and workspace
-data. Protect exported backups with encryption and access controls equivalent
-to the running appliance.
+## Repository administration
 
-## Repository metadata
-
-The canonical GitHub description, homepage, and topics are stored in
-`.github/repository-metadata.json`. A repository administrator can synchronize
-them after authenticating GitHub CLI:
+Canonical GitHub description, homepage, and topics are stored in
+`.github/repository-metadata.json` and can be applied by an authenticated
+repository administrator:
 
 ```bash
 make sync-repo-metadata
 ```
 
-## Project status
+Merged transient branches are removed by the repository cleanup workflow only
+after GitHub confirms that they contain no commits outside `main`.
 
-Version 0.1.0 is the first functional amd64 image profile. It is intended for
-VM and lab deployment before production use. The source validation, upstream
-artifact verification, ISO pipeline, UEFI live-boot smoke test, appliance
-runtime, firewall, rootless sandbox bridge, console, backups, audits, SBOM,
-staged OpenClaw update transaction, compatibility gate, and code rollback are
-implemented.
+## Documentation
 
-The automated test does not complete a full interactive Debian installation.
-Physical hardware coverage, browser sandbox images, ARM64 installer media,
-measured boot, secure boot signing, disk-encryption automation, and A/B base-OS
-updates remain later milestones.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- [`docs/POLICIES.md`](docs/POLICIES.md)
+- [`docs/UPDATES.md`](docs/UPDATES.md)
+- [`docs/RELEASES.md`](docs/RELEASES.md)
+- [`SECURITY.md`](SECURITY.md)

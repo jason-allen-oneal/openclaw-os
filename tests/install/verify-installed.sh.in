@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+exec >/dev/ttyS0 2>&1
+
+fail() {
+  printf 'OPENCLAW_OS_INSTALL_VERIFY_FAIL:%s\n' "$1"
+  exit 1
+}
+
+expect_enabled() {
+  local unit="$1"
+  systemctl is-enabled "$unit" >/dev/null 2>&1 \
+    || fail "unit-not-enabled:${unit}"
+}
+
+[[ -r /usr/share/openclaw-os/release.env ]] || fail 'missing-release-env'
+# shellcheck disable=SC1091
+source /usr/share/openclaw-os/release.env
+[[ "$OPENCLAW_OS_VERSION" == '@EXPECTED_OS_VERSION@' ]] \
+  || fail "os-version:${OPENCLAW_OS_VERSION}"
+[[ "$OPENCLAW_VERSION" == '@EXPECTED_OPENCLAW_VERSION@' ]] \
+  || fail "openclaw-pin:${OPENCLAW_VERSION}"
+[[ "$NODE_VERSION" == '@EXPECTED_NODE_VERSION@' ]] \
+  || fail "node-pin:${NODE_VERSION}"
+
+[[ -r /etc/os-release ]] || fail 'missing-os-release'
+# shellcheck disable=SC1091
+source /etc/os-release
+[[ "$ID" == 'openclaw-os' ]] || fail "os-id:${ID}"
+[[ "$VERSION_ID" == '@EXPECTED_OS_VERSION@' ]] \
+  || fail "os-release-version:${VERSION_ID}"
+
+[[ -x /opt/node/current/bin/node ]] || fail 'missing-node'
+[[ -x /opt/openclaw/current/bin/openclaw ]] || fail 'missing-openclaw'
+actual_node="$(/opt/node/current/bin/node --version)"
+[[ "$actual_node" == 'v@EXPECTED_NODE_VERSION@' ]] \
+  || fail "node-version:${actual_node}"
+actual_openclaw="$(
+  PATH=/opt/node/current/bin:/usr/bin:/bin \
+    /opt/openclaw/current/bin/openclaw --version 2>/dev/null | head -n 1
+)"
+[[ "$actual_openclaw" == *'@EXPECTED_OPENCLAW_VERSION@'* ]] \
+  || fail "openclaw-version:${actual_openclaw}"
+
+for unit in \
+  NetworkManager.service \
+  nftables.service \
+  openclaw.service \
+  openclaw-hostd.service \
+  openclaw-controller.service \
+  openclaw-console.service \
+  openclaw-backup.timer \
+  openclaw-audit.timer; do
+  expect_enabled "$unit"
+done
+
+ssh_state="$(systemctl is-enabled ssh.service 2>/dev/null || true)"
+[[ "$ssh_state" == 'masked' ]] || fail "ssh-state:${ssh_state}"
+nft -c -f /etc/nftables.conf >/dev/null || fail 'invalid-firewall'
+[[ "$(stat -c '%U:%G:%a' /var/lib/openclaw/state)" == 'openclaw:openclaw:700' ]] \
+  || fail 'state-dir-mode'
+[[ -d /srv/openclaw/workspaces/main ]] || fail 'missing-main-workspace'
+[[ ! -e /var/lib/openclaw/state/openclaw.json ]] \
+  || fail 'onboarding-state-shipped'
+
+root_source="$(findmnt -n -o SOURCE /)"
+[[ "$root_source" == /dev/vda* ]] || fail "root-source:${root_source}"
+[[ -e /boot/grub/grub.cfg ]] || fail 'missing-grub-config'
+
+case '@FIRMWARE_MODE@' in
+  uefi)
+    [[ -d /sys/firmware/efi ]] || fail 'not-uefi-boot'
+    findmnt /boot/efi >/dev/null || fail 'efi-not-mounted'
+    if [[ ! -e /boot/efi/EFI/BOOT/BOOTX64.EFI \
+      && ! -e /boot/efi/EFI/debian/grubx64.efi ]]; then
+      fail 'missing-efi-loader'
+    fi
+    ;;
+  bios)
+    [[ ! -d /sys/firmware/efi ]] || fail 'unexpected-uefi-boot'
+    [[ -d /boot/grub/i386-pc ]] || fail 'missing-bios-grub'
+    ;;
+  *)
+    fail 'invalid-firmware-expectation'
+    ;;
+esac
+
+printf 'OPENCLAW_OS_INSTALLED_BOOT_OK firmware=%s os=%s openclaw=%s node=%s root=%s\n' \
+  '@FIRMWARE_MODE@' "$OPENCLAW_OS_VERSION" "$OPENCLAW_VERSION" \
+  "$NODE_VERSION" "$root_source"
+sync
+sleep 2
+systemctl poweroff --no-block

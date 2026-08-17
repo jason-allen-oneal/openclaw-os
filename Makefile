@@ -3,7 +3,7 @@ ROOT := $(CURDIR)
 VERSION := $(shell cat VERSION)
 ARCH ?= amd64
 
-.PHONY: validate verify-artifacts test test-control-plane test-release-gate release-policy sync-repo-metadata iso smoke clean run tree
+.PHONY: validate verify-artifacts test test-control-plane test-release-gate test-branch-cleanup release-policy sync-repo-metadata iso smoke clean run tree
 
 validate:
 	./scripts/validate.sh
@@ -18,12 +18,16 @@ test:
 	./tests/repository-metadata-test.sh
 	./scripts/test-control-plane.sh
 	node --test tests/release-gate.test.mjs
+	python3 -m unittest discover -s tests -p 'branch_cleanup_test.py'
 
 test-control-plane:
 	./scripts/test-control-plane.sh
 
 test-release-gate:
 	node --test tests/release-gate.test.mjs
+
+test-branch-cleanup:
+	python3 -m unittest discover -s tests -p 'branch_cleanup_test.py'
 
 release-policy:
 	node scripts/release-gate.mjs policy config/release-promotion-policy.json

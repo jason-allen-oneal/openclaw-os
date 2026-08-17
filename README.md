@@ -102,7 +102,7 @@ sudo apt install --yes \
   live-build debootstrap xorriso squashfs-tools \
   grub-pc-bin grub-efi-amd64-bin isolinux syslinux-common syslinux-utils \
   mtools dosfstools \
-  curl jq ca-certificates openssl shellcheck nftables \
+  curl jq ca-certificates openssl python3 shellcheck nftables \
   qemu-system-x86 ovmf
 ```
 
@@ -244,8 +244,10 @@ repository administrator:
 make sync-repo-metadata
 ```
 
-Merged transient branches are removed by the repository cleanup workflow only
-after GitHub confirms that they contain no commits outside `main`.
+The repository cleanup workflow deletes a branch only when it is fully contained
+in `main`, or when its current tip exactly matches the recorded head of a
+confirmed merged pull request. Protected branches, branches with open pull
+requests, and branches advanced after merge are retained.
 
 ## Documentation
 

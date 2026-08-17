@@ -1,0 +1,320 @@
+#!/usr/bin/env node
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+
+function fail(message) {
+  throw new Error(message);
+}
+
+function readJson(path) {
+  try {
+    return JSON.parse(readFileSync(resolve(path), "utf8"));
+  } catch (error) {
+    fail(`cannot read JSON ${path}: ${error.message}`);
+  }
+}
+
+function assert(condition, message) {
+  if (!condition) fail(message);
+}
+
+function uniqueStrings(value, label) {
+  assert(
+    Array.isArray(value) &&
+      value.every(
+        (item) => typeof item === "string" && item.trim().length > 0
+      ),
+    `${label} must be a non-empty string array`
+  );
+  assert(new Set(value).size === value.length, `${label} contains duplicates`);
+  return value;
+}
+
+function uniqueIntegers(value, label) {
+  assert(
+    Array.isArray(value) &&
+      value.every((item) => Number.isInteger(item) && item > 0),
+    `${label} must be a positive integer array`
+  );
+  assert(new Set(value).size === value.length, `${label} contains duplicates`);
+  return value;
+}
+
+export function validatePolicy(policy) {
+  assert(
+    policy && typeof policy === "object" && !Array.isArray(policy),
+    "policy must be an object"
+  );
+  assert(policy.schemaVersion === 1, "unsupported policy schemaVersion");
+  assert(
+    policy.artifactIdentity?.digestAlgorithm === "sha256",
+    "artifact digest must be sha256"
+  );
+  assert(
+    policy.artifactIdentity?.rebuildOnPromotion === false,
+    "promotion must not rebuild artifacts"
+  );
+  assert(
+    policy.artifactIdentity?.requireSameDigestAcrossChannels === true,
+    "promotion must preserve artifact identity"
+  );
+  assert(
+    policy.evidence?.waiversAllowed === false,
+    "release waivers must remain disabled"
+  );
+  assert(
+    Number.isInteger(policy.evidence?.maximumAgeHours) &&
+      policy.evidence.maximumAgeHours > 0,
+    "maximum evidence age must be positive"
+  );
+
+  const names = ["alpha", "beta", "stable"];
+  for (const name of names) {
+    assert(policy.channels?.[name], `missing ${name} channel`);
+  }
+  assert(!policy.channels.alpha.inherits, "alpha must not inherit another channel");
+  assert(policy.channels.beta.inherits === "alpha", "beta must inherit alpha");
+  assert(policy.channels.stable.inherits === "beta", "stable must inherit beta");
+
+  let previousSoak = 0;
+  for (const name of names) {
+    const channel = policy.channels[name];
+    assert(
+      Number.isInteger(channel.minimumSoakHours) &&
+        channel.minimumSoakHours >= previousSoak,
+      `${name} soak period must be cumulative`
+    );
+    previousSoak = channel.minimumSoakHours;
+    uniqueStrings(channel.requiredEvidence, `${name}.requiredEvidence`);
+    uniqueIntegers(channel.requiredClosedIssues, `${name}.requiredClosedIssues`);
+    uniqueIntegers(channel.allowedOpenBlockers, `${name}.allowedOpenBlockers`);
+    uniqueStrings(channel.requiredApprovalRoles, `${name}.requiredApprovalRoles`);
+    if (name === "alpha") {
+      uniqueStrings(channel.requiredChecks, "alpha.requiredChecks");
+    }
+  }
+
+  uniqueStrings(
+    policy.releaseNotes?.requiredSections,
+    "releaseNotes.requiredSections"
+  );
+  assert(
+    policy.withdrawal?.required === true,
+    "emergency withdrawal must be required"
+  );
+  uniqueStrings(policy.withdrawal?.reasons, "withdrawal.reasons");
+  return policy;
+}
+
+function resolvedChannel(policy, channelName) {
+  assert(
+    ["alpha", "beta", "stable"].includes(channelName),
+    `unknown channel: ${channelName}`
+  );
+  const order = ["alpha", "beta", "stable"];
+  const target = order.indexOf(channelName);
+  const merged = {
+    requiredChecks: [],
+    requiredEvidence: [],
+    requiredClosedIssues: [],
+    allowedOpenBlockers: [],
+    requiredApprovalRoles: [],
+    minimumSoakHours: 0
+  };
+
+  for (let index = 0; index <= target; index += 1) {
+    const channel = policy.channels[order[index]];
+    for (const key of [
+      "requiredChecks",
+      "requiredEvidence",
+      "requiredClosedIssues",
+      "requiredApprovalRoles"
+    ]) {
+      for (const value of channel[key] ?? []) {
+        if (!merged[key].includes(value)) merged[key].push(value);
+      }
+    }
+    merged.allowedOpenBlockers = [...(channel.allowedOpenBlockers ?? [])];
+    merged.minimumSoakHours = channel.minimumSoakHours;
+  }
+
+  return merged;
+}
+
+function validateReleaseNoteValue(value, section) {
+  if (Array.isArray(value)) {
+    assert(
+      value.length > 0 &&
+        value.every(
+          (item) => typeof item === "string" && item.trim().length > 0
+        ),
+      `release notes section is missing: ${section}`
+    );
+    return;
+  }
+  assert(
+    typeof value === "string" && value.trim().length > 0,
+    `release notes section is missing: ${section}`
+  );
+}
+
+export function validateEvidence(policyInput, evidence, now = new Date()) {
+  const policy = validatePolicy(policyInput);
+  assert(
+    evidence && typeof evidence === "object" && !Array.isArray(evidence),
+    "evidence must be an object"
+  );
+  assert(evidence.schemaVersion === 1, "unsupported evidence schemaVersion");
+  assert(now instanceof Date && !Number.isNaN(now.getTime()), "now is invalid");
+
+  const channel = resolvedChannel(policy, evidence.channel);
+  assert(
+    /^[a-f0-9]{40}$/.test(evidence.sourceCommit ?? ""),
+    "sourceCommit must be a full SHA-1 commit ID"
+  );
+  assert(
+    evidence.artifact?.digestAlgorithm === "sha256",
+    "artifact digest algorithm must be sha256"
+  );
+  assert(
+    /^[a-f0-9]{64}$/.test(evidence.artifact?.testedDigest ?? ""),
+    "testedDigest must be SHA-256"
+  );
+  assert(
+    evidence.artifact.testedDigest === evidence.artifact.promotedDigest,
+    "promoted artifact digest differs from tested artifact"
+  );
+  assert(
+    evidence.artifact.sourceCommit === evidence.sourceCommit,
+    "artifact source commit differs from evidence commit"
+  );
+  assert(
+    typeof evidence.artifact.name === "string" &&
+      evidence.artifact.name.endsWith(".iso"),
+    "artifact name must identify an ISO"
+  );
+
+  const generatedAt = new Date(evidence.generatedAt);
+  assert(!Number.isNaN(generatedAt.getTime()), "generatedAt must be an ISO timestamp");
+  const ageHours = (now.getTime() - generatedAt.getTime()) / 3_600_000;
+  assert(
+    ageHours >= 0 && ageHours <= policy.evidence.maximumAgeHours,
+    "release evidence is stale or from the future"
+  );
+  assert(
+    Number.isFinite(evidence.soakHours) &&
+      evidence.soakHours >= channel.minimumSoakHours,
+    "minimum soak period has not elapsed"
+  );
+  assert(
+    Array.isArray(evidence.waivers) && evidence.waivers.length === 0,
+    "release waivers are not permitted"
+  );
+
+  for (const check of channel.requiredChecks) {
+    assert(
+      evidence.checks?.[check] === "success",
+      `required check did not pass: ${check}`
+    );
+  }
+
+  const evidenceNames = uniqueStrings(evidence.evidence, "evidence.evidence");
+  for (const item of channel.requiredEvidence) {
+    assert(evidenceNames.includes(item), `missing required evidence: ${item}`);
+  }
+
+  const closedIssues = uniqueIntegers(
+    evidence.closedIssues,
+    "evidence.closedIssues"
+  );
+  for (const issue of channel.requiredClosedIssues) {
+    assert(
+      closedIssues.includes(issue),
+      `required issue is not recorded closed: #${issue}`
+    );
+  }
+
+  const openBlockers = uniqueIntegers(
+    evidence.openBlockers,
+    "evidence.openBlockers"
+  );
+  for (const issue of openBlockers) {
+    assert(
+      channel.allowedOpenBlockers.includes(issue),
+      `unexpected open release blocker: #${issue}`
+    );
+    assert(
+      !closedIssues.includes(issue),
+      `release blocker is recorded both open and closed: #${issue}`
+    );
+  }
+  for (const issue of channel.allowedOpenBlockers) {
+    assert(
+      openBlockers.includes(issue) || closedIssues.includes(issue),
+      `release-blocker snapshot is incomplete: #${issue}`
+    );
+  }
+
+  assert(Array.isArray(evidence.approvals), "evidence.approvals must be an array");
+  const roles = uniqueStrings(
+    evidence.approvals.map((approval) => approval?.role),
+    "evidence.approval roles"
+  );
+  for (const role of channel.requiredApprovalRoles) {
+    assert(roles.includes(role), `missing approval role: ${role}`);
+  }
+  for (const approval of evidence.approvals) {
+    assert(
+      typeof approval.login === "string" && approval.login.trim().length > 0,
+      "approval login is required"
+    );
+    const approvedAt = new Date(approval.approvedAt);
+    assert(!Number.isNaN(approvedAt.getTime()), "approval timestamp is invalid");
+    assert(
+      approvedAt.getTime() <= generatedAt.getTime() &&
+        approvedAt.getTime() <= now.getTime(),
+      "approval timestamp is after the evidence timestamp or in the future"
+    );
+  }
+
+  assert(
+    evidence.releaseNotes &&
+      typeof evidence.releaseNotes === "object" &&
+      !Array.isArray(evidence.releaseNotes),
+    "releaseNotes must be an object"
+  );
+  for (const section of policy.releaseNotes.requiredSections) {
+    validateReleaseNoteValue(evidence.releaseNotes[section], section);
+  }
+
+  return true;
+}
+
+function usage() {
+  console.error(
+    "Usage: release-gate.mjs policy <policy.json> | evidence <policy.json> <evidence.json>"
+  );
+  process.exit(2);
+}
+
+const invokedDirectly =
+  process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+
+if (invokedDirectly) {
+  try {
+    const [command, policyPath, evidencePath] = process.argv.slice(2);
+    if (command === "policy" && policyPath && !evidencePath) {
+      validatePolicy(readJson(policyPath));
+      console.log("Release promotion policy is valid.");
+    } else if (command === "evidence" && policyPath && evidencePath) {
+      validateEvidence(readJson(policyPath), readJson(evidencePath));
+      console.log("Release evidence satisfies the promotion policy.");
+    } else {
+      usage();
+    }
+  } catch (error) {
+    console.error(`ERROR: ${error.message}`);
+    process.exit(1);
+  }
+}

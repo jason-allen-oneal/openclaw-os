@@ -7,6 +7,8 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "test:control-plane": "node --experimental-strip-types --test tests/control-plane/*.test.ts"
+    "test:control-plane": "node --experimental-strip-types --test tests/control-plane/*.test.ts",
+    "test:release-gate": "node --test tests/release-gate.test.mjs",
+    "validate:release-policy": "node scripts/release-gate.mjs policy config/release-promotion-policy.json"
   }
 }

@@ -3,7 +3,7 @@ ROOT := $(CURDIR)
 VERSION := $(shell cat VERSION)
 ARCH ?= amd64
 
-.PHONY: validate verify-artifacts test test-control-plane sync-repo-metadata iso smoke clean run tree
+.PHONY: validate verify-artifacts test test-control-plane test-release-gate release-policy sync-repo-metadata iso smoke clean run tree
 
 validate:
 	./scripts/validate.sh
@@ -17,9 +17,16 @@ test:
 	./tests/policy-test.sh
 	./tests/repository-metadata-test.sh
 	./scripts/test-control-plane.sh
+	node --test tests/release-gate.test.mjs
 
 test-control-plane:
 	./scripts/test-control-plane.sh
+
+test-release-gate:
+	node --test tests/release-gate.test.mjs
+
+release-policy:
+	node scripts/release-gate.mjs policy config/release-promotion-policy.json
 
 sync-repo-metadata:
 	./scripts/sync-repository-metadata.sh

@@ -1,0 +1,73 @@
+name: Release gate
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/release-gate.yml'
+      - 'config/release-promotion-policy.json'
+      - 'docs/RELEASES.md'
+      - 'scripts/release-gate.mjs'
+      - 'tests/release-gate.test.mjs'
+      - 'Makefile'
+      - 'package.json'
+      - 'README.md'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/release-gate.yml'
+      - 'config/release-promotion-policy.json'
+      - 'docs/RELEASES.md'
+      - 'scripts/release-gate.mjs'
+      - 'tests/release-gate.test.mjs'
+      - 'Makefile'
+      - 'package.json'
+      - 'README.md'
+  workflow_dispatch:
+    inputs:
+      evidence_path:
+        description: Optional repository-relative release evidence JSON file
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          check-latest: false
+
+      - name: Validate promotion policy
+        run: node scripts/release-gate.mjs policy config/release-promotion-policy.json
+
+      - name: Test release gate
+        run: node --test tests/release-gate.test.mjs
+
+      - name: Validate supplied release evidence
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.evidence_path != '' }}
+        env:
+          EVIDENCE_PATH: ${{ inputs.evidence_path }}
+        run: |
+          case "$EVIDENCE_PATH" in
+            /*|*..*)
+              echo 'evidence_path must be a repository-relative path without .. segments' >&2
+              exit 2
+              ;;
+          esac
+          test -f "$EVIDENCE_PATH"
+          node scripts/release-gate.mjs evidence \
+            config/release-promotion-policy.json \
+            "$EVIDENCE_PATH"

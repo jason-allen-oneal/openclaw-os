@@ -68,7 +68,7 @@ jobs:
                 live-build debootstrap xorriso squashfs-tools \
                 grub-pc-bin grub-efi-amd64-bin isolinux syslinux-common syslinux-utils \
                 mtools dosfstools \
-                ca-certificates curl jq git make openssl xz-utils shellcheck nftables
+                ca-certificates curl jq git make openssl python3 xz-utils shellcheck nftables
               git config --global --add safe.directory /work
 
               source image/config/includes.chroot/usr/share/openclaw-os/release.env

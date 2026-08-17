@@ -8,7 +8,6 @@ on:
       - 'v*'
     paths:
       - '.github/workflows/build-iso.yml'
-      - '.github/repository-metadata.json'
       - 'VERSION'
       - 'package.json'
       - 'Makefile'
@@ -18,23 +17,7 @@ on:
       - 'image/**'
       - 'scripts/**'
       - 'tests/**'
-      - 'README.md'
-      - 'docs/**'
   pull_request:
-    paths:
-      - '.github/workflows/build-iso.yml'
-      - '.github/repository-metadata.json'
-      - 'VERSION'
-      - 'package.json'
-      - 'Makefile'
-      - 'config/**'
-      - 'packages/**'
-      - 'services/**'
-      - 'image/**'
-      - 'scripts/**'
-      - 'tests/**'
-      - 'README.md'
-      - 'docs/**'
 
 permissions:
   contents: read
@@ -47,14 +30,94 @@ env:
   DEBIAN_BUILD_IMAGE: debian:13-slim@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2
 
 jobs:
+  changes:
+    name: detect-iso-impact
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      build_required: ${{ steps.filter.outputs.build_required }}
+    steps:
+      - name: Check out pull request history
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Determine whether the ISO is affected
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" != "pull_request" ]]; then
+            echo "build_required=true" >>"$GITHUB_OUTPUT"
+            echo "Non-pull-request event: a complete ISO build is required."
+            exit 0
+          fi
+
+          if [[ ! "$BASE_SHA" =~ ^[a-f0-9]{40}$ || ! "$HEAD_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "build_required=true" >>"$GITHUB_OUTPUT"
+            echo "Pull request commit identity was unavailable; failing safe to a complete ISO build."
+            exit 0
+          fi
+
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null \
+            || ! git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null; then
+            echo "build_required=true" >>"$GITHUB_OUTPUT"
+            echo "Pull request history was incomplete; failing safe to a complete ISO build."
+            exit 0
+          fi
+
+          changed_files="$RUNNER_TEMP/openclaw-os-changed-files"
+          git diff --name-only -z "$BASE_SHA" "$HEAD_SHA" >"$changed_files"
+
+          echo "Changed files:"
+          if [[ -s "$changed_files" ]]; then
+            tr '\0' '\n' <"$changed_files"
+          else
+            echo "  (none detected)"
+          fi
+
+          build_required="$(./scripts/iso-build-required.sh <"$changed_files")"
+          case "$build_required" in
+            true|false)
+              ;;
+            *)
+              echo "Invalid ISO change-filter result: $build_required" >&2
+              exit 1
+              ;;
+          esac
+
+          echo "build_required=$build_required" >>"$GITHUB_OUTPUT"
+          echo "ISO build required: $build_required"
+
   build-amd64:
+    needs: changes
+    if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     steps:
+      - name: Require successful change detection
+        if: ${{ needs.changes.result != 'success' }}
+        run: |
+          echo "ISO change detection failed; refusing to satisfy the required check." >&2
+          exit 1
+
+      - name: Satisfy the check for non-image changes
+        if: ${{ needs.changes.result == 'success' && needs.changes.outputs.build_required != 'true' }}
+        run: |
+          echo "No ISO-impacting files changed."
+          echo "The required build-amd64 check is satisfied without constructing an image."
+
       - name: Check out repository
+        if: ${{ needs.changes.outputs.build_required == 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build with Debian 13 live-build
+        if: ${{ needs.changes.outputs.build_required == 'true' }}
         run: |
           docker pull "$DEBIAN_BUILD_IMAGE"
           docker run --privileged --rm \
@@ -97,11 +160,13 @@ jobs:
             '
 
       - name: Install UEFI smoke-test tools
+        if: ${{ needs.changes.outputs.build_required == 'true' }}
         run: |
           sudo apt-get update
           sudo apt-get install --yes ovmf qemu-system-x86 squashfs-tools xorriso
 
       - name: Verify boot configuration
+        if: ${{ needs.changes.outputs.build_required == 'true' }}
         id: boot_config
         run: |
           set -euo pipefail
@@ -158,6 +223,7 @@ jobs:
           fi
 
       - name: UEFI live-boot smoke test
+        if: ${{ needs.changes.outputs.build_required == 'true' }}
         id: uefi_smoke
         env:
           SMOKE_DIAGNOSTICS_DIR: ${{ runner.temp }}/openclaw-os-uefi-smoke
@@ -166,7 +232,7 @@ jobs:
           ./scripts/smoke-iso.sh "dist/openclaw-os-$(cat VERSION)-amd64.iso"
 
       - name: Upload UEFI smoke-test diagnostics
-        if: ${{ always() }}
+        if: ${{ always() && needs.changes.outputs.build_required == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openclaw-os-uefi-smoke-${{ github.sha }}
@@ -175,7 +241,7 @@ jobs:
           retention-days: 14
 
       - name: Upload unverified ISO debug artifact
-        if: ${{ always() && (steps.boot_config.outcome == 'failure' || steps.uefi_smoke.outcome == 'failure') }}
+        if: ${{ always() && needs.changes.outputs.build_required == 'true' && (steps.boot_config.outcome == 'failure' || steps.uefi_smoke.outcome == 'failure') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openclaw-os-unverified-${{ github.sha }}
@@ -184,7 +250,7 @@ jobs:
           retention-days: 7
 
       - name: Upload ISO, SBOM, and metadata
-        if: ${{ steps.boot_config.outcome == 'success' && steps.uefi_smoke.outcome == 'success' }}
+        if: ${{ needs.changes.outputs.build_required == 'true' && steps.boot_config.outcome == 'success' && steps.uefi_smoke.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openclaw-os-amd64

@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-# shellcheck disable=SC2016
-
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_SCRIPT="$ROOT_DIR/scripts/install-iso-vm.sh"
 SMOKE_SCRIPT="$ROOT_DIR/scripts/smoke-iso.sh"
@@ -73,9 +71,9 @@ done
 for marker in \
   OPENCLAW_OS_UPGRADE_STEP_OK \
   verify_openclaw_release_metadata \
-  'update stage "$from_version" --allow-untested' \
+  "update stage \"\$from_version\" --allow-untested" \
   'update apply --allow-untested' \
-  'rollback "$from_version"' \
+  "rollback \"\$from_version\"" \
   stage-candidate \
   upgrade-candidate \
   rollback-previous \
@@ -119,8 +117,8 @@ for marker in \
   'tests/installed-system/matrix.json' \
   "jq -c '.cases[]'" \
   'runUpgradePath' \
-  'INSTALL_TIMEOUT_SECONDS="$install_timeout"' \
-  'INSTALLED_BOOT_TIMEOUT_SECONDS="$boot_timeout"' \
+  "INSTALL_TIMEOUT_SECONDS=\"\$install_timeout\"" \
+  "INSTALLED_BOOT_TIMEOUT_SECONDS=\"\$boot_timeout\"" \
   'installed-system-evidence.build.json' \
   'installed-system-checksum.build.json' \
   'source_iso_sha' \
@@ -129,14 +127,16 @@ for marker in \
     || fail "matrix runner is missing contract marker: $marker"
 done
 
-case 'openclaw-os-0.1.0-amd64.installed-system-evidence.build.json' in
+evidence_artifact_name='openclaw-os-0.1.0-amd64.installed-system-evidence.build.json'
+case "$evidence_artifact_name" in
   openclaw-os-*.build.json)
     ;;
   *)
     fail 'evidence filename is not included by the verified artifact glob'
     ;;
 esac
-case 'openclaw-os-0.1.0-amd64.installed-system-checksum.build.json' in
+checksum_artifact_name='openclaw-os-0.1.0-amd64.installed-system-checksum.build.json'
+case "$checksum_artifact_name" in
   openclaw-os-*.build.json)
     ;;
   *)

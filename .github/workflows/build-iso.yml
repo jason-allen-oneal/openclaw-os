@@ -82,6 +82,14 @@ jobs:
               export PATH="/opt/node-v${NODE_VERSION}-linux-x64/bin:$PATH"
               test "$(node --version)" = "v${NODE_VERSION}"
 
+              grub_template="image/config/bootloaders/grub-pc/grub.cfg"
+              grub_marker_count="$(grep -oF "@LINUX_LIVE@" "$grub_template" | wc -l || true)"
+              if [[ "$grub_marker_count" -ne 1 ]]; then
+                printf "Expected exactly one @LINUX_LIVE@ marker in %s, found %s.\n" \
+                  "$grub_template" "$grub_marker_count" >&2
+                exit 1
+              fi
+
               make validate
               make test
               make verify-artifacts
@@ -91,12 +99,92 @@ jobs:
       - name: Install UEFI smoke-test tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes qemu-system-x86 ovmf
+          sudo apt-get install --yes ovmf qemu-system-x86 squashfs-tools xorriso
+
+      - name: Verify boot configuration
+        id: boot_config
+        run: |
+          set -euo pipefail
+          iso_path="dist/openclaw-os-$(cat VERSION)-amd64.iso"
+          extract_dir="$(mktemp -d)"
+          diagnostics_dir="$RUNNER_TEMP/openclaw-os-uefi-smoke"
+          trap 'rm -rf "$extract_dir"' EXIT
+          mkdir -p "$diagnostics_dir"
+
+          xorriso -osirrox on \
+            -indev "$iso_path" \
+            -extract /live/filesystem.squashfs "$extract_dir/filesystem.squashfs"
+          xorriso -osirrox on \
+            -indev "$iso_path" \
+            -extract /boot/grub/grub.cfg "$diagnostics_dir/grub.cfg"
+          xorriso -indev "$iso_path" -find /boot/grub -exec lsdl -- \
+            >"$diagnostics_dir/iso-grub-listing.txt"
+          unsquashfs -cat \
+            "$extract_dir/filesystem.squashfs" \
+            etc/systemd/system/openclaw-boot-marker.service \
+            >"$diagnostics_dir/openclaw-boot-marker.service"
+          unsquashfs -ll "$extract_dir/filesystem.squashfs" \
+            >"$diagnostics_dir/squashfs-listing.txt"
+
+          grep -Fq 'OPENCLAW_OS_BOOT_OK' \
+            "$diagnostics_dir/openclaw-boot-marker.service"
+          grep -Fq '/dev/ttyS0' \
+            "$diagnostics_dir/openclaw-boot-marker.service"
+          grep -Fq \
+            'etc/systemd/system/multi-user.target.wants/openclaw-boot-marker.service' \
+            "$diagnostics_dir/squashfs-listing.txt"
+          grep -Eq '^set timeout=5$' "$diagnostics_dir/grub.cfg"
+          grep -Fq 'terminal_output console serial' "$diagnostics_dir/grub.cfg"
+          grep -Eq '^menuentry "Live system' "$diagnostics_dir/grub.cfg"
+          primary_live_entry_count="$(
+            grep -Fxc 'menuentry "Live system (amd64)" --hotkey=l {' \
+              "$diagnostics_dir/grub.cfg" || true
+          )"
+          if [[ "$primary_live_entry_count" -ne 1 ]]; then
+            printf 'Expected exactly one primary amd64 live menu entry, found %s.\n' \
+              "$primary_live_entry_count" >&2
+            exit 1
+          fi
+          grep -Eq '^[[:space:]]*linux[[:space:]]+/live/vmlinuz-' \
+            "$diagnostics_dir/grub.cfg"
+          grep -Fq 'console=ttyS0,115200n8' "$diagnostics_dir/grub.cfg"
+          if grep -Fq '@LINUX_LIVE@' "$diagnostics_dir/grub.cfg"; then
+            echo 'live-build left the GRUB live-entry marker unexpanded' >&2
+            exit 1
+          fi
+          if grep -Fq 'source /boot/grub/live.cfg' "$diagnostics_dir/grub.cfg"; then
+            echo 'GRUB configuration references a nonexistent live.cfg' >&2
+            exit 1
+          fi
 
       - name: UEFI live-boot smoke test
-        run: ./scripts/smoke-iso.sh dist/openclaw-os-$(cat VERSION)-amd64.iso
+        id: uefi_smoke
+        env:
+          SMOKE_DIAGNOSTICS_DIR: ${{ runner.temp }}/openclaw-os-uefi-smoke
+        run: |
+          mkdir -p "$SMOKE_DIAGNOSTICS_DIR"
+          ./scripts/smoke-iso.sh "dist/openclaw-os-$(cat VERSION)-amd64.iso"
+
+      - name: Upload UEFI smoke-test diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openclaw-os-uefi-smoke-${{ github.sha }}
+          path: ${{ runner.temp }}/openclaw-os-uefi-smoke/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload unverified ISO debug artifact
+        if: ${{ always() && (steps.boot_config.outcome == 'failure' || steps.uefi_smoke.outcome == 'failure') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openclaw-os-unverified-${{ github.sha }}
+          path: dist/openclaw-os-*.iso
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload ISO, SBOM, and metadata
+        if: ${{ steps.boot_config.outcome == 'success' && steps.uefi_smoke.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openclaw-os-amd64

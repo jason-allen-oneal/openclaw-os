@@ -5,9 +5,9 @@ Before=openclaw-console.service
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'printf "OPENCLAW_OS_BOOT_OK\\n" >/dev/console'
+ExecStart=/bin/sh -c 'printf "OPENCLAW_OS_BOOT_OK\n"; if [ -c /dev/ttyS0 ]; then printf "OPENCLAW_OS_BOOT_OK\n" >/dev/ttyS0; fi'
 RemainAfterExit=yes
-StandardOutput=null
+StandardOutput=journal
 StandardError=journal
 
 [Install]

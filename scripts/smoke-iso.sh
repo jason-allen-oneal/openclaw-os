@@ -1,18 +1,59 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ISO_PATH="${1:-}"
-[[ -n "$ISO_PATH" && -f "$ISO_PATH" ]] || {
-  echo "Usage: smoke-iso.sh <path-to-iso>" >&2
-  exit 2
+usage() {
+  cat <<'USAGE'
+Usage: smoke-iso.sh <path-to-iso>
+
+Boots an OpenClaw OS ISO with OVMF/QEMU, captures the serial console, and
+waits for the OPENCLAW_OS_BOOT_OK marker. Diagnostics are retained under
+SMOKE_DIAGNOSTICS_DIR, or dist/smoke-test by default.
+USAGE
 }
 
-for command_name in qemu-system-x86_64 grep; do
+ISO_PATH="${1:-}"
+if [[ -z "$ISO_PATH" || ! -f "$ISO_PATH" ]]; then
+  usage >&2
+  exit 2
+fi
+
+for command_name in qemu-system-x86_64 grep realpath sha256sum stat; do
   command -v "$command_name" >/dev/null 2>&1 || {
-    echo "Missing command: $command_name" >&2
+    printf 'Missing command: %s\n' "$command_name" >&2
     exit 1
   }
 done
+
+ISO_PATH="$(realpath "$ISO_PATH")"
+SMOKE_TIMEOUT_SECONDS="${SMOKE_TIMEOUT_SECONDS:-240}"
+if [[ ! "$SMOKE_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  printf 'SMOKE_TIMEOUT_SECONDS must be a positive integer, got: %s\n' \
+    "$SMOKE_TIMEOUT_SECONDS" >&2
+  exit 2
+fi
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+diagnostics_dir="${SMOKE_DIAGNOSTICS_DIR:-$repo_root/dist/smoke-test}"
+if [[ "$diagnostics_dir" != /* ]]; then
+  diagnostics_dir="$PWD/$diagnostics_dir"
+fi
+
+mkdir -p "$diagnostics_dir"
+serial_log="$diagnostics_dir/serial.log"
+qemu_log="$diagnostics_dir/qemu.log"
+metadata_file="$diagnostics_dir/metadata.txt"
+command_file="$diagnostics_dir/qemu-command.txt"
+exit_status_file="$diagnostics_dir/qemu.exit-status"
+outcome_file="$diagnostics_dir/outcome.txt"
+rm -f \
+  "$serial_log" \
+  "$qemu_log" \
+  "$metadata_file" \
+  "$command_file" \
+  "$exit_status_file" \
+  "$outcome_file"
+: >"$serial_log"
+: >"$qemu_log"
 
 ovmf_code=""
 ovmf_vars=""
@@ -28,55 +69,133 @@ for pair in \
     break
   fi
 done
-[[ -n "$ovmf_code" ]] || {
-  echo "OVMF firmware was not found" >&2
+if [[ -z "$ovmf_code" ]]; then
+  printf 'OVMF firmware was not found\n' >&2
   exit 1
-}
+fi
 
-work_dir="$(mktemp -d)"
-log_file="$work_dir/serial.log"
-vars_copy="$work_dir/OVMF_VARS.fd"
+scratch_dir="$(mktemp -d)"
+vars_copy="$scratch_dir/OVMF_VARS.fd"
 cp "$ovmf_vars" "$vars_copy"
 qemu_pid=""
+
 cleanup() {
+  local status=$?
   if [[ -n "$qemu_pid" ]] && kill -0 "$qemu_pid" 2>/dev/null; then
     kill "$qemu_pid" 2>/dev/null || true
     wait "$qemu_pid" 2>/dev/null || true
   fi
-  rm -rf "$work_dir"
+  rm -rf "$scratch_dir"
+  return "$status"
 }
 trap cleanup EXIT
 
-qemu-system-x86_64 \
-  -machine q35,accel=tcg \
-  -cpu max \
-  -m 2048 \
-  -smp 2 \
-  -display none \
-  -monitor none \
-  -serial stdio \
-  -no-reboot \
-  -boot order=d \
-  -drive "if=pflash,format=raw,readonly=on,file=$ovmf_code" \
-  -drive "if=pflash,format=raw,file=$vars_copy" \
-  -drive "file=$ISO_PATH,media=cdrom,readonly=on" \
-  -nic user,model=virtio-net-pci \
-  >"$log_file" 2>&1 &
+qemu_version="$(qemu-system-x86_64 --version | sed -n '1p')"
+{
+  printf 'timestamp_utc=%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+  printf 'iso_path=%s\n' "$ISO_PATH"
+  printf 'iso_size_bytes=%s\n' "$(stat -c '%s' "$ISO_PATH")"
+  printf 'iso_sha256=%s\n' "$(sha256sum "$ISO_PATH" | awk '{print $1}')"
+  printf 'timeout_seconds=%s\n' "$SMOKE_TIMEOUT_SECONDS"
+  printf 'qemu_version=%s\n' "$qemu_version"
+  printf 'ovmf_code=%s\n' "$ovmf_code"
+  printf 'ovmf_vars_template=%s\n' "$ovmf_vars"
+  printf 'kernel=%s\n' "$(uname -srvmo)"
+} >"$metadata_file"
+
+qemu_command=(
+  qemu-system-x86_64
+  -machine "q35,accel=tcg"
+  -cpu max
+  -m 2048
+  -smp 2
+  -display none
+  -monitor none
+  -serial "file:${serial_log}"
+  -no-reboot
+  -boot "order=d,menu=off,strict=on"
+  -drive "if=pflash,format=raw,readonly=on,file=${ovmf_code}"
+  -drive "if=pflash,format=raw,file=${vars_copy}"
+  -drive "file=${ISO_PATH},media=cdrom,readonly=on,format=raw"
+  -nic "user,model=virtio-net-pci"
+)
+printf '%q ' "${qemu_command[@]}" >"$command_file"
+printf '\n' >>"$command_file"
+
+print_log() {
+  local label="$1"
+  local path="$2"
+  local line_count
+
+  printf '%s\n' "--- ${label} ---" >&2
+  if [[ ! -s "$path" ]]; then
+    printf '(empty)\n' >&2
+    return
+  fi
+
+  line_count="$(wc -l <"$path")"
+  if (( line_count <= 400 )); then
+    cat "$path" >&2
+  else
+    printf '(showing final 400 of %s lines)\n' "$line_count" >&2
+    tail -n 400 "$path" >&2
+  fi
+}
+
+fail_with_diagnostics() {
+  local message="$1"
+  printf '%s\n' "$message" >&2
+  printf 'Diagnostics retained at: %s\n' "$diagnostics_dir" >&2
+  print_log 'serial console' "$serial_log"
+  print_log 'QEMU output' "$qemu_log"
+}
+
+printf 'Booting %s under UEFI QEMU...\n' "$ISO_PATH"
+"${qemu_command[@]}" >"$qemu_log" 2>&1 &
 qemu_pid=$!
 
-for ((attempt = 1; attempt <= 240; attempt++)); do
-  if grep -q 'OPENCLAW_OS_BOOT_OK' "$log_file"; then
-    echo "UEFI live-boot smoke test passed."
+deadline=$((SECONDS + SMOKE_TIMEOUT_SECONDS))
+while (( SECONDS < deadline )); do
+  if grep -Fq 'OPENCLAW_OS_BOOT_OK' "$serial_log"; then
+    printf 'marker-detected\n' >"$outcome_file"
+    printf 'terminated-after-marker\n' >"$exit_status_file"
+    printf 'UEFI live-boot smoke test passed.\n'
     exit 0
   fi
+
   if ! kill -0 "$qemu_pid" 2>/dev/null; then
-    echo "QEMU exited before the boot marker appeared." >&2
-    cat "$log_file" >&2
+    qemu_status=0
+    if wait "$qemu_pid"; then
+      qemu_status=0
+    else
+      qemu_status=$?
+    fi
+    qemu_pid=""
+    printf '%s\n' "$qemu_status" >"$exit_status_file"
+    printf 'qemu-exited-before-marker\n' >"$outcome_file"
+    fail_with_diagnostics 'QEMU exited before the boot marker appeared.'
     exit 1
   fi
+
   sleep 1
 done
 
-echo "Timed out before the OpenClaw OS boot marker appeared." >&2
-cat "$log_file" >&2
+if grep -Fq 'OPENCLAW_OS_BOOT_OK' "$serial_log"; then
+  printf 'marker-detected\n' >"$outcome_file"
+  printf 'terminated-after-marker\n' >"$exit_status_file"
+  printf 'UEFI live-boot smoke test passed.\n'
+  exit 0
+fi
+
+kill "$qemu_pid" 2>/dev/null || true
+qemu_status=0
+if wait "$qemu_pid"; then
+  qemu_status=0
+else
+  qemu_status=$?
+fi
+qemu_pid=""
+printf '%s\n' "$qemu_status" >"$exit_status_file"
+printf 'timeout-before-marker\n' >"$outcome_file"
+fail_with_diagnostics 'Timed out before the OpenClaw OS boot marker appeared.'
 exit 1

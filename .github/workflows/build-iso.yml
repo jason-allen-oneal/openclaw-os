@@ -82,6 +82,14 @@ jobs:
               export PATH="/opt/node-v${NODE_VERSION}-linux-x64/bin:$PATH"
               test "$(node --version)" = "v${NODE_VERSION}"
 
+              grub_template="image/config/bootloaders/grub-pc/grub.cfg"
+              grub_marker_count="$(grep -oF "@LINUX_LIVE@" "$grub_template" | wc -l || true)"
+              if [[ "$grub_marker_count" -ne 1 ]]; then
+                printf "Expected exactly one @LINUX_LIVE@ marker in %s, found %s.\n" \
+                  "$grub_template" "$grub_marker_count" >&2
+                exit 1
+              fi
+
               make validate
               make test
               make verify-artifacts
@@ -109,7 +117,7 @@ jobs:
           xorriso -osirrox on \
             -indev "$iso_path" \
             -extract /boot/grub/grub.cfg "$diagnostics_dir/grub.cfg"
-          xorriso -indev "$iso_path" -find /boot/grub -print \
+          xorriso -indev "$iso_path" -find /boot/grub -exec lsdl -- \
             >"$diagnostics_dir/iso-grub-listing.txt"
           unsquashfs -cat \
             "$extract_dir/filesystem.squashfs" \
@@ -128,6 +136,15 @@ jobs:
           grep -Eq '^set timeout=5$' "$diagnostics_dir/grub.cfg"
           grep -Fq 'terminal_output console serial' "$diagnostics_dir/grub.cfg"
           grep -Eq '^menuentry "Live system' "$diagnostics_dir/grub.cfg"
+          primary_live_entry_count="$(
+            grep -Fxc 'menuentry "Live system (amd64)" --hotkey=l {' \
+              "$diagnostics_dir/grub.cfg" || true
+          )"
+          if [[ "$primary_live_entry_count" -ne 1 ]]; then
+            printf 'Expected exactly one primary amd64 live menu entry, found %s.\n' \
+              "$primary_live_entry_count" >&2
+            exit 1
+          fi
           grep -Eq '^[[:space:]]*linux[[:space:]]+/live/vmlinuz-' \
             "$diagnostics_dir/grub.cfg"
           grep -Fq 'console=ttyS0,115200n8' "$diagnostics_dir/grub.cfg"

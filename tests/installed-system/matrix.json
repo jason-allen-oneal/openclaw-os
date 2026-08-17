@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "diskSizeGiB": 24,
+  "installTimeoutSeconds": 2400,
+  "bootTimeoutSeconds": 1200,
+  "cases": [
+    {
+      "id": "uefi",
+      "firmware": "uefi",
+      "machine": "q35",
+      "runUpgradePath": true
+    },
+    {
+      "id": "bios",
+      "firmware": "bios",
+      "machine": "pc",
+      "runUpgradePath": false
+    }
+  ],
+  "upgrade": {
+    "fromVersion": "2026.6.33",
+    "fromTarball": "https://registry.npmjs.org/openclaw/-/openclaw-2026.6.33.tgz",
+    "fromIntegrity": "sha512-53MCYfnMEzQmrh/mFNpqfUcQunZASPZ2qYOmqn6wq3K4gZPzV0QOMwjxOCU2C+VmQ5FqzVU8exy7j7pyL3EBzQ==",
+    "fromReleaseCommit": "7af0cfc9c5488e03c4e2f528bdc7ac9f7778b35e"
+  }
+}

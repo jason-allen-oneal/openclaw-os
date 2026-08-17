@@ -6,8 +6,11 @@ usage() {
 Usage: smoke-iso.sh <path-to-iso>
 
 Boots an OpenClaw OS ISO with OVMF/QEMU, captures the serial console, and
-waits for the OPENCLAW_OS_BOOT_OK marker. Diagnostics are retained under
-SMOKE_DIAGNOSTICS_DIR, or dist/smoke-test by default.
+waits for the OPENCLAW_OS_BOOT_OK marker. In CI, it also installs the ISO onto
+blank UEFI and BIOS disks and verifies each installed system after the ISO is
+detached. Set SMOKE_RUN_INSTALL_TESTS=false to disable the install phase.
+Diagnostics are retained under SMOKE_DIAGNOSTICS_DIR, or dist/smoke-test by
+default.
 USAGE
 }
 
@@ -31,6 +34,17 @@ if [[ ! "$SMOKE_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
     "$SMOKE_TIMEOUT_SECONDS" >&2
   exit 2
 fi
+
+run_install_tests="${SMOKE_RUN_INSTALL_TESTS:-${CI:-false}}"
+case "$run_install_tests" in
+  true|false)
+    ;;
+  *)
+    printf 'SMOKE_RUN_INSTALL_TESTS must be true or false, got: %s\n' \
+      "$run_install_tests" >&2
+    exit 2
+    ;;
+esac
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 diagnostics_dir="${SMOKE_DIAGNOSTICS_DIR:-$repo_root/dist/smoke-test}"
@@ -79,12 +93,17 @@ vars_copy="$scratch_dir/OVMF_VARS.fd"
 cp "$ovmf_vars" "$vars_copy"
 qemu_pid=""
 
-cleanup() {
-  local status=$?
+stop_qemu() {
   if [[ -n "$qemu_pid" ]] && kill -0 "$qemu_pid" 2>/dev/null; then
     kill "$qemu_pid" 2>/dev/null || true
     wait "$qemu_pid" 2>/dev/null || true
   fi
+  qemu_pid=""
+}
+
+cleanup() {
+  local status=$?
+  stop_qemu
   rm -rf "$scratch_dir"
   return "$status"
 }
@@ -97,6 +116,7 @@ qemu_version="$(qemu-system-x86_64 --version | sed -n '1p')"
   printf 'iso_size_bytes=%s\n' "$(stat -c '%s' "$ISO_PATH")"
   printf 'iso_sha256=%s\n' "$(sha256sum "$ISO_PATH" | awk '{print $1}')"
   printf 'timeout_seconds=%s\n' "$SMOKE_TIMEOUT_SECONDS"
+  printf 'run_install_tests=%s\n' "$run_install_tests"
   printf 'qemu_version=%s\n' "$qemu_version"
   printf 'ovmf_code=%s\n' "$ovmf_code"
   printf 'ovmf_vars_template=%s\n' "$ovmf_vars"
@@ -134,7 +154,7 @@ print_log() {
   fi
 
   line_count="$(wc -l <"$path")"
-  if (( line_count <= 400 )); then
+  if ((line_count <= 400)); then
     cat "$path" >&2
   else
     printf '(showing final 400 of %s lines)\n' "$line_count" >&2
@@ -150,16 +170,44 @@ fail_with_diagnostics() {
   print_log 'QEMU output' "$qemu_log"
 }
 
+run_blank_disk_tests() {
+  local firmware
+  if [[ "$run_install_tests" != "true" ]]; then
+    return 0
+  fi
+
+  [[ -x "$repo_root/scripts/install-iso-vm.sh" ]] || {
+    printf 'Missing executable installer test harness: %s\n' \
+      "$repo_root/scripts/install-iso-vm.sh" >&2
+    return 1
+  }
+
+  for firmware in uefi bios; do
+    printf 'Running blank-disk %s installation test...\n' "$firmware"
+    INSTALL_TEST_DIAGNOSTICS_DIR="$diagnostics_dir/install-$firmware" \
+      "$repo_root/scripts/install-iso-vm.sh" "$ISO_PATH" "$firmware"
+  done
+}
+
+pass_live_boot() {
+  printf 'marker-detected\n' >"$outcome_file"
+  printf 'terminated-after-marker\n' >"$exit_status_file"
+  stop_qemu
+  printf 'UEFI live-boot smoke test passed.\n'
+  run_blank_disk_tests
+  if [[ "$run_install_tests" == "true" ]]; then
+    printf 'UEFI and BIOS blank-disk installation tests passed.\n'
+  fi
+}
+
 printf 'Booting %s under UEFI QEMU...\n' "$ISO_PATH"
 "${qemu_command[@]}" >"$qemu_log" 2>&1 &
 qemu_pid=$!
 
 deadline=$((SECONDS + SMOKE_TIMEOUT_SECONDS))
-while (( SECONDS < deadline )); do
+while ((SECONDS < deadline)); do
   if grep -Fq 'OPENCLAW_OS_BOOT_OK' "$serial_log"; then
-    printf 'marker-detected\n' >"$outcome_file"
-    printf 'terminated-after-marker\n' >"$exit_status_file"
-    printf 'UEFI live-boot smoke test passed.\n'
+    pass_live_boot
     exit 0
   fi
 
@@ -181,21 +229,12 @@ while (( SECONDS < deadline )); do
 done
 
 if grep -Fq 'OPENCLAW_OS_BOOT_OK' "$serial_log"; then
-  printf 'marker-detected\n' >"$outcome_file"
-  printf 'terminated-after-marker\n' >"$exit_status_file"
-  printf 'UEFI live-boot smoke test passed.\n'
+  pass_live_boot
   exit 0
 fi
 
-kill "$qemu_pid" 2>/dev/null || true
-qemu_status=0
-if wait "$qemu_pid"; then
-  qemu_status=0
-else
-  qemu_status=$?
-fi
-qemu_pid=""
-printf '%s\n' "$qemu_status" >"$exit_status_file"
+stop_qemu
+printf 'timeout-before-marker\n' >"$exit_status_file"
 printf 'timeout-before-marker\n' >"$outcome_file"
 fail_with_diagnostics 'Timed out before the OpenClaw OS boot marker appeared.'
 exit 1

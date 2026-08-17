@@ -1,0 +1,12 @@
+[Unit]
+Description=OpenClaw OS CI installed-system verifier
+After=network.target
+ConditionPathExists=/etc/openclaw/ci-install-test
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/openclaw-ci-install-verifier
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

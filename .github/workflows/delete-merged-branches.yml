@@ -21,133 +21,19 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      - name: Check out trusted default-branch cleanup code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Test branch cleanup decisions
+        run: python3 -m unittest discover -s tests -p 'branch_cleanup_test.py'
+
       - name: Delete fully merged transient branches
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_API_URL: ${{ github.api_url }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          python3 - <<'PY'
-          from __future__ import annotations
-
-          import json
-          import os
-          import sys
-          from typing import Any
-          from urllib.error import HTTPError
-          from urllib.parse import quote, urlencode
-          from urllib.request import Request, urlopen
-
-          token = os.environ.get("GITHUB_TOKEN", "")
-          repository = os.environ.get("GITHUB_REPOSITORY", "")
-          api_url = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
-          default_branch = os.environ.get("DEFAULT_BRANCH", "main")
-          transient_prefixes = (
-              "build/",
-              "chore/",
-              "ci/",
-              "docs/",
-              "feat/",
-              "fix/",
-              "perf/",
-              "refactor/",
-              "test/",
-          )
-
-          if not token or not repository or "/" not in repository:
-              raise SystemExit("GitHub workflow context is incomplete")
-
-          owner, _ = repository.split("/", 1)
-          headers = {
-              "Accept": "application/vnd.github+json",
-              "Authorization": f"Bearer {token}",
-              "User-Agent": "openclaw-os-branch-cleanup",
-              "X-GitHub-Api-Version": "2022-11-28",
-          }
-
-          def request_json(path: str, *, method: str = "GET") -> Any:
-              request = Request(f"{api_url}{path}", headers=headers, method=method)
-              try:
-                  with urlopen(request, timeout=30) as response:
-                      body = response.read()
-              except HTTPError as error:
-                  detail = error.read().decode("utf-8", errors="replace")
-                  raise RuntimeError(f"GitHub API {method} {path} failed with {error.code}: {detail}") from error
-              if not body:
-                  return None
-              return json.loads(body)
-
-          def list_branches() -> list[dict[str, Any]]:
-              branches: list[dict[str, Any]] = []
-              page = 1
-              while True:
-                  batch = request_json(
-                      f"/repos/{repository}/branches?{urlencode({'per_page': 100, 'page': page})}"
-                  )
-                  if not isinstance(batch, list):
-                      raise RuntimeError("GitHub returned an invalid branch list")
-                  branches.extend(entry for entry in batch if isinstance(entry, dict))
-                  if len(batch) < 100:
-                      return branches
-                  page += 1
-
-          def pull_requests(branch: str, state: str) -> list[dict[str, Any]]:
-              query = urlencode(
-                  {
-                      "state": state,
-                      "head": f"{owner}:{branch}",
-                      "base": default_branch,
-                      "per_page": 100,
-                  }
-              )
-              result = request_json(f"/repos/{repository}/pulls?{query}")
-              if not isinstance(result, list):
-                  raise RuntimeError(f"GitHub returned invalid pull request data for {branch}")
-              return [entry for entry in result if isinstance(entry, dict)]
-
-          deleted: list[str] = []
-          skipped: list[str] = []
-
-          for entry in list_branches():
-              branch = entry.get("name")
-              if not isinstance(branch, str) or not branch or branch == default_branch:
-                  continue
-              if entry.get("protected") is True:
-                  skipped.append(f"{branch}: protected")
-                  continue
-
-              open_prs = pull_requests(branch, "open")
-              if open_prs:
-                  skipped.append(f"{branch}: still used by an open pull request")
-                  continue
-
-              merged_prs = [pr for pr in pull_requests(branch, "closed") if pr.get("merged_at")]
-              if not merged_prs and not branch.startswith(transient_prefixes):
-                  skipped.append(f"{branch}: not a merged PR branch or transient branch")
-                  continue
-
-              comparison_ref = (
-                  f"{quote(default_branch, safe='')}...{quote(branch, safe='')}"
-              )
-              comparison = request_json(f"/repos/{repository}/compare/{comparison_ref}")
-              if not isinstance(comparison, dict) or comparison.get("ahead_by") != 0:
-                  skipped.append(f"{branch}: contains commits not in {default_branch}")
-                  continue
-
-              encoded_branch = quote(branch, safe="")
-              request_json(
-                  f"/repos/{repository}/git/refs/heads/{encoded_branch}",
-                  method="DELETE",
-              )
-              deleted.append(branch)
-              print(f"Deleted merged branch: {branch}")
-
-          if skipped:
-              print("Branches retained:")
-              for reason in skipped:
-                  print(f"  {reason}")
-
-          print(f"Deleted {len(deleted)} merged branch(es).")
-          sys.exit(0)
-          PY
+        run: python3 scripts/delete_merged_branches.py

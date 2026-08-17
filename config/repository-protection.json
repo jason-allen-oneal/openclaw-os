@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "repository": "jason-allen-oneal/openclaw-os",
+  "defaultBranch": "main",
+  "deleteBranchOnMerge": true,
+  "allowUpdateBranch": true,
+  "main": {
+    "strictStatusChecks": true,
+    "requiredStatusChecks": [
+      "validate",
+      "build-amd64"
+    ],
+    "enforceAdmins": true,
+    "requiredApprovingReviewCount": 0,
+    "requiredConversationResolution": true,
+    "allowForcePushes": false,
+    "allowDeletions": false
+  }
+}

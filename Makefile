@@ -3,7 +3,7 @@ ROOT := $(CURDIR)
 VERSION := $(shell cat VERSION)
 ARCH ?= amd64
 
-.PHONY: validate verify-artifacts test test-control-plane test-release-gate test-branch-cleanup release-policy sync-repo-metadata iso smoke clean run tree
+.PHONY: validate verify-artifacts test test-control-plane test-release-gate test-branch-cleanup test-iso-change-filter test-repository-settings release-policy sync-repo-metadata apply-repo-settings iso smoke clean run tree
 
 validate:
 	./scripts/validate.sh
@@ -16,6 +16,8 @@ test:
 	./tests/update-test.sh
 	./tests/policy-test.sh
 	./tests/repository-metadata-test.sh
+	./tests/repository-settings-test.sh
+	./tests/iso-build-required-test.sh
 	./scripts/test-control-plane.sh
 	node --test tests/release-gate.test.mjs
 	python3 -m unittest discover -s tests -p 'branch_cleanup_test.py'
@@ -29,11 +31,20 @@ test-release-gate:
 test-branch-cleanup:
 	python3 -m unittest discover -s tests -p 'branch_cleanup_test.py'
 
+test-iso-change-filter:
+	./tests/iso-build-required-test.sh
+
+test-repository-settings:
+	./tests/repository-settings-test.sh
+
 release-policy:
 	node scripts/release-gate.mjs policy config/release-promotion-policy.json
 
 sync-repo-metadata:
 	./scripts/sync-repository-metadata.sh
+
+apply-repo-settings:
+	./scripts/apply-repository-settings.sh
 
 iso: validate verify-artifacts
 	sudo ./scripts/build-image.sh $(ARCH)

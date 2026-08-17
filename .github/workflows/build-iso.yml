@@ -113,8 +113,14 @@ jobs:
           echo "ISO change detection failed; refusing to satisfy the required check." >&2
           exit 1
 
+      - name: Require a valid change decision
+        if: ${{ needs.changes.result == 'success' && needs.changes.outputs.build_required != 'true' && needs.changes.outputs.build_required != 'false' }}
+        run: |
+          echo "ISO change detection returned no valid decision; refusing to satisfy the required check." >&2
+          exit 1
+
       - name: Satisfy the check for non-image changes
-        if: ${{ needs.changes.result == 'success' && needs.changes.outputs.build_required != 'true' }}
+        if: ${{ needs.changes.result == 'success' && needs.changes.outputs.build_required == 'false' }}
         run: |
           echo "No ISO-impacting files changed."
           echo "The required build-amd64 check is satisfied without constructing an image."

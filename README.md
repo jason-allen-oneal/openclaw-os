@@ -27,6 +27,8 @@ Implemented today:
 - SPDX 2.3 SBOM and artifact checksums
 - UEFI QEMU boot verification with retained failure diagnostics
 - machine-readable alpha, beta, and stable promotion policy
+- protected `main` with required validation and ISO checks
+- automatic deletion of safely merged transient branches
 
 Still required before a stable release:
 
@@ -36,7 +38,6 @@ Still required before a stable release:
 - transactional base-OS rollback
 - Secure Boot signing and tamper rejection testing
 - physical hardware coverage
-- repository protection and canonical metadata applied through GitHub settings
 
 ## Current pins
 
@@ -128,8 +129,12 @@ dist/openclaw-os-0.1.0-amd64.build.json
 ```
 
 The verified GitHub Actions artifact is uploaded only after the generated GRUB
-configuration and the UEFI live-boot marker pass. Failed checks retain serial,
-QEMU, firmware, and image diagnostics, plus an explicitly unverified debug ISO.
+configuration and the UEFI live-boot marker pass. The `build-amd64` check runs
+for every pull request. Documentation-only and repository-administration
+changes satisfy the required check through a tested no-op path, while any
+unknown or image-relevant path fails safe to a complete ISO build. Failed image
+checks retain serial, QEMU, firmware, and image diagnostics, plus an explicitly
+unverified debug ISO.
 
 ## Install and first boot
 
@@ -237,12 +242,21 @@ encryption and access controls equivalent to the running appliance.
 ## Repository administration
 
 Canonical GitHub description, homepage, and topics are stored in
-`.github/repository-metadata.json` and can be applied by an authenticated
-repository administrator:
+`.github/repository-metadata.json`. Canonical branch protection and merge
+settings are stored in `config/repository-protection.json`.
+
+An authenticated repository administrator can apply and verify the complete
+configuration with:
 
 ```bash
-make sync-repo-metadata
+make apply-repo-settings
 ```
+
+The policy requires pull requests, current branches, the `validate` and
+`build-amd64` checks, administrator enforcement, resolved review conversations,
+and zero approving reviews while there is only one maintainer. It blocks force
+pushes and deletion of `main`, enables pull-request branch updating, and deletes
+merged branches automatically.
 
 The repository cleanup workflow deletes a branch only when it is fully contained
 in `main`, or when its current tip exactly matches the recorded head of a

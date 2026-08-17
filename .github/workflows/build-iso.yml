@@ -81,7 +81,14 @@ jobs:
             echo "  (none detected)"
           fi
 
-          build_required="$(./scripts/iso-build-required.sh <"$changed_files")"
+          trusted_filter="$RUNNER_TEMP/iso-build-required.sh"
+          if ! git show "$BASE_SHA:scripts/iso-build-required.sh" >"$trusted_filter"; then
+            echo "build_required=true" >>"$GITHUB_OUTPUT"
+            echo "The base branch has no trusted ISO change filter; a complete ISO build is required."
+            exit 0
+          fi
+
+          build_required="$(bash "$trusted_filter" <"$changed_files")"
           case "$build_required" in
             true|false)
               ;;

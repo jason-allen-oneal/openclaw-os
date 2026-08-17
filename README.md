@@ -25,16 +25,17 @@ Implemented today:
 - verified backups and periodic audits
 - opt-in staged OpenClaw updates with code rollback and failed-candidate quarantine
 - SPDX 2.3 SBOM and artifact checksums
-- UEFI QEMU boot verification with retained failure diagnostics
+- UEFI QEMU live-boot verification with retained failure diagnostics
+- automated blank-disk installation and installed-system boot verification under UEFI and legacy BIOS
 - machine-readable alpha, beta, and stable promotion policy
 - protected `main` with required validation and ISO checks
 - automatic deletion of safely merged transient branches
 
 Still required before a stable release:
 
-- automated blank-disk installation and upgrade testing
 - production release-signing trust
 - evidence-backed OpenClaw compatibility records
+- tested upgrade paths from supported prior OpenClaw OS releases
 - transactional base-OS rollback
 - Secure Boot signing and tamper rejection testing
 - physical hardware coverage
@@ -118,6 +119,13 @@ make iso
 make smoke
 ```
 
+Run the complete installation gate locally, including blank-disk installs under
+UEFI and legacy BIOS:
+
+```bash
+make install-smoke
+```
+
 Generated files are written to `dist/`:
 
 ```text
@@ -128,13 +136,29 @@ dist/openclaw-os-0.1.0-amd64.sbom.spdx.json.sha256
 dist/openclaw-os-0.1.0-amd64.build.json
 ```
 
-The verified GitHub Actions artifact is uploaded only after the generated GRUB
-configuration and the UEFI live-boot marker pass. The `build-amd64` check runs
-for every pull request. Documentation-only and repository-administration
-changes satisfy the required check through a tested no-op path, while any
-unknown or image-relevant path fails safe to a complete ISO build. Failed image
-checks retain serial, QEMU, firmware, and image diagnostics, plus an explicitly
-unverified debug ISO.
+The verified GitHub Actions artifact is uploaded only after all of these gates
+pass:
+
+1. Generated GRUB configuration validation.
+2. UEFI live-ISO boot and readiness marker.
+3. Noninteractive installation to a fresh UEFI virtual disk.
+4. Reboot from that installed UEFI disk with the ISO detached.
+5. Noninteractive installation to a fresh legacy-BIOS virtual disk.
+6. Reboot from that installed BIOS disk with the ISO detached.
+7. Installed-system verification of partitioning, bootloader, service enablement,
+   onboarding state, firewall syntax, Node.js, OpenClaw, and OpenClaw OS versions.
+
+The install harness generates a unique disposable password hash at runtime,
+serves the preseed only from the CI host, stores only a redacted preseed in
+diagnostics, and never places CI credentials or installer automation under the
+production `image/` tree. Failed checks retain serial logs, QEMU logs, firmware
+metadata, disk metadata, command lines, and the explicitly unverified debug ISO.
+See [`docs/INSTALL-TESTING.md`](docs/INSTALL-TESTING.md).
+
+The `build-amd64` check runs for every pull request. Documentation-only and
+repository-administration changes satisfy the required check through a tested
+no-op path, while any unknown or image-relevant path fails safe to the complete
+ISO, live-boot, and blank-disk installation gate.
 
 ## Install and first boot
 
@@ -227,7 +251,10 @@ node scripts/release-gate.mjs evidence \
 
 The gate checks artifact identity, CI status, evidence freshness, soak period,
 blocker state, approvals, release notes, and rollback information. Waivers are
-not accepted. See [`docs/RELEASES.md`](docs/RELEASES.md).
+not accepted. A clean VM installation is required for alpha. A tested upgrade
+from a supported prior OpenClaw OS release remains required for beta and cannot
+be claimed until a prior release artifact exists. See
+[`docs/RELEASES.md`](docs/RELEASES.md).
 
 ## Backups and audits
 
@@ -266,6 +293,7 @@ requests, and branches advanced after merge are retained.
 ## Documentation
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- [`docs/INSTALL-TESTING.md`](docs/INSTALL-TESTING.md)
 - [`docs/POLICIES.md`](docs/POLICIES.md)
 - [`docs/UPDATES.md`](docs/UPDATES.md)
 - [`docs/RELEASES.md`](docs/RELEASES.md)

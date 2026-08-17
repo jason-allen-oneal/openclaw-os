@@ -3,7 +3,7 @@ ROOT := $(CURDIR)
 VERSION := $(shell cat VERSION)
 ARCH ?= amd64
 
-.PHONY: validate verify-artifacts test test-control-plane test-release-gate test-branch-cleanup test-iso-change-filter test-repository-settings release-policy sync-repo-metadata apply-repo-settings iso smoke clean run tree
+.PHONY: validate verify-artifacts test test-control-plane test-release-gate test-branch-cleanup test-iso-change-filter test-repository-settings test-install-vm release-policy sync-repo-metadata apply-repo-settings iso smoke install-smoke clean run tree
 
 validate:
 	./scripts/validate.sh
@@ -18,6 +18,7 @@ test:
 	./tests/repository-metadata-test.sh
 	./tests/repository-settings-test.sh
 	./tests/iso-build-required-test.sh
+	./tests/install-vm-test.sh
 	./scripts/test-control-plane.sh
 	node --test tests/release-gate.test.mjs
 	python3 -m unittest discover -s tests -p 'branch_cleanup_test.py'
@@ -37,6 +38,9 @@ test-iso-change-filter:
 test-repository-settings:
 	./tests/repository-settings-test.sh
 
+test-install-vm:
+	./tests/install-vm-test.sh
+
 release-policy:
 	node scripts/release-gate.mjs policy config/release-promotion-policy.json
 
@@ -52,6 +56,10 @@ iso: validate verify-artifacts
 smoke:
 	@test -f dist/openclaw-os-$(VERSION)-$(ARCH).iso || { echo "ISO not found. Run make iso first." >&2; exit 1; }
 	./scripts/smoke-iso.sh dist/openclaw-os-$(VERSION)-$(ARCH).iso
+
+install-smoke:
+	@test -f dist/openclaw-os-$(VERSION)-$(ARCH).iso || { echo "ISO not found. Run make iso first." >&2; exit 1; }
+	SMOKE_RUN_INSTALL_TESTS=true ./scripts/smoke-iso.sh dist/openclaw-os-$(VERSION)-$(ARCH).iso
 
 clean:
 	@if command -v lb >/dev/null 2>&1; then cd image && sudo lb clean --purge || true; fi

@@ -21,7 +21,7 @@ jq -e '
 ' "$POLICY" >/dev/null
 
 grep -Fq 'scripts/sync-repository-metadata.sh' "$APPLY_SCRIPT"
-grep -Fq 'branches/$default_branch/protection' "$APPLY_SCRIPT"
+grep -Fq "branches/\$default_branch/protection" "$APPLY_SCRIPT"
 grep -Fq 'requiredStatusChecks' "$APPLY_SCRIPT"
 grep -Fq 'delete_branch_on_merge' "$APPLY_SCRIPT"
 grep -Fq 'allow_update_branch' "$APPLY_SCRIPT"

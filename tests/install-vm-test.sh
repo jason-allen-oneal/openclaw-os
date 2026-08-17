@@ -36,10 +36,13 @@ for marker in debian-installer/exit/poweroff /dev/vda @PASSWORD_HASH@ @BASE_URL@
     || fail "preseed template is missing contract marker: $marker"
 done
 
+# The following patterns intentionally verify literal shell source text.
+# shellcheck disable=SC2016
 grep -Fq 'INSTALL_TEST_DIAGNOSTICS_DIR="$diagnostics_dir/install-$firmware"' \
   "$SMOKE_SCRIPT" || fail 'smoke harness does not retain per-firmware diagnostics'
 grep -Fq 'for firmware in uefi bios' "$SMOKE_SCRIPT" \
   || fail 'smoke harness does not cover UEFI and BIOS installs'
+# shellcheck disable=SC2016
 grep -Fq 'SMOKE_RUN_INSTALL_TESTS:-${CI:-false}' "$SMOKE_SCRIPT" \
   || fail 'CI does not enable installed-system tests by default'
 
@@ -58,8 +61,10 @@ grep -Fq 'openssl rand -hex 32' "$INSTALL_SCRIPT" \
   || fail 'installer password is not generated per run'
 grep -Fq '[REDACTED]' "$INSTALL_SCRIPT" \
   || fail 'preseed diagnostics are not redacted'
+# shellcheck disable=SC2016
 grep -Fq 'file=${ISO_PATH},media=cdrom' "$INSTALL_SCRIPT" \
   || fail 'installer does not attach the source ISO'
+# shellcheck disable=SC2016
 if grep -Fq 'file=${ISO_PATH},media=cdrom' \
   <(sed -n '/installed_command=(/,/^)/p' "$INSTALL_SCRIPT"); then
   fail 'installed-system boot still attaches the source ISO'

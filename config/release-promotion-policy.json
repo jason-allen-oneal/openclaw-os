@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "artifactIdentity": {
+    "digestAlgorithm": "sha256",
+    "rebuildOnPromotion": false,
+    "requireSameDigestAcrossChannels": true
+  },
+  "evidence": {
+    "maximumAgeHours": 24,
+    "waiversAllowed": false
+  },
+  "channels": {
+    "alpha": {
+      "minimumSoakHours": 24,
+      "requiredChecks": ["validate", "build-amd64"],
+      "requiredEvidence": [
+        "artifact-manifest",
+        "checksums",
+        "sbom",
+        "uefi-live-boot",
+        "clean-install",
+        "compatibility-manifest",
+        "update-code-rollback",
+        "known-limitations"
+      ],
+      "requiredClosedIssues": [6, 7, 8, 12, 13],
+      "allowedOpenBlockers": [9, 10, 11, 14],
+      "requiredApprovalRoles": ["release-owner"]
+    },
+    "beta": {
+      "inherits": "alpha",
+      "minimumSoakHours": 168,
+      "requiredEvidence": [
+        "previous-release-upgrade",
+        "base-os-recovery",
+        "release-signature",
+        "security-review",
+        "supported-hardware"
+      ],
+      "requiredClosedIssues": [9, 10, 14],
+      "allowedOpenBlockers": [11],
+      "requiredApprovalRoles": ["release-owner", "security-reviewer"]
+    },
+    "stable": {
+      "inherits": "beta",
+      "minimumSoakHours": 336,
+      "requiredEvidence": [
+        "physical-clean-install",
+        "physical-upgrade",
+        "secure-boot-negative-test",
+        "recovery-drill",
+        "withdrawal-drill"
+      ],
+      "requiredClosedIssues": [11],
+      "allowedOpenBlockers": [],
+      "requiredApprovalRoles": ["release-owner", "security-reviewer", "release-operator"]
+    }
+  },
+  "releaseNotes": {
+    "requiredSections": [
+      "knownLimitations",
+      "testedHardware",
+      "supportedUpgradePaths",
+      "checksums",
+      "sbom",
+      "signingIdentities",
+      "rollbackProcedure"
+    ]
+  },
+  "withdrawal": {
+    "required": true,
+    "reasons": [
+      "signature-or-trust-failure",
+      "boot-failure",
+      "data-loss-or-corruption",
+      "critical-security-regression",
+      "rollback-failure"
+    ]
+  }
+}

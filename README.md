@@ -102,7 +102,7 @@ sudo apt install --yes \
   live-build debootstrap xorriso squashfs-tools \
   grub-pc-bin grub-efi-amd64-bin isolinux syslinux-common syslinux-utils \
   mtools dosfstools \
-  curl jq ca-certificates openssl shellcheck nftables \
+  curl jq ca-certificates openssl python3 shellcheck nftables \
   qemu-system-x86 ovmf
 ```
 

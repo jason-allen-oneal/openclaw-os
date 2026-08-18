@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1090,SC1091,SC2034
 set -Eeuo pipefail
 exec >/dev/ttyS0 2>&1
 
@@ -75,7 +76,6 @@ mark_upgrade_step() {
 }
 
 [[ -r /usr/share/openclaw-os/release.env ]] || fail 'missing-release-env'
-# shellcheck disable=SC1091
 source /usr/share/openclaw-os/release.env
 [[ "$OPENCLAW_OS_VERSION" == '@EXPECTED_OS_VERSION@' ]] \
   || fail "os-version:${OPENCLAW_OS_VERSION}"
@@ -85,7 +85,6 @@ source /usr/share/openclaw-os/release.env
   || fail "node-pin:${NODE_VERSION}"
 
 [[ -r /etc/os-release ]] || fail 'missing-os-release'
-# shellcheck disable=SC1091
 source /etc/os-release
 [[ "$ID" == 'openclaw-os' ]] || fail "os-id:${ID}"
 [[ "$VERSION_ID" == '@EXPECTED_OS_VERSION@' ]] \
@@ -142,6 +141,67 @@ case '@FIRMWARE_MODE@' in
     ;;
 esac
 
+load_transaction_modules() {
+  OPENCLAW_APPLIANCE_LIBRARY_ONLY=1
+  source /usr/local/sbin/openclaw-appliance
+  unset OPENCLAW_APPLIANCE_LIBRARY_ONLY
+}
+
+assert_release_tuple() {
+  local version="$1"
+  local integrity="$2"
+  local expected_commit="${3:-}"
+
+  case "$version" in
+    "$from_version")
+      [[ "$integrity" == "$from_integrity" ]] \
+        || fail 'previous-release-integrity-mismatch'
+      [[ -z "$expected_commit" || "$expected_commit" == "$from_release_commit" ]] \
+        || fail 'previous-release-commit-mismatch'
+      ;;
+    "$OPENCLAW_VERSION")
+      [[ "$integrity" == "$OPENCLAW_NPM_INTEGRITY" ]] \
+        || fail 'candidate-release-integrity-mismatch'
+      [[ -z "$expected_commit" || "$expected_commit" == "$OPENCLAW_RELEASE_COMMIT" ]] \
+        || fail 'candidate-release-commit-mismatch'
+      ;;
+    *)
+      fail "unexpected-release-metadata:${version}"
+      ;;
+  esac
+}
+
+# The package identities are immutable inputs already pinned by the tested image
+# and matrix. Resolve them locally so the transaction test does not depend on
+# unauthenticated GitHub API quota or a moving npm metadata response. The actual
+# previous package tarball is still downloaded and checked against its SRI by the
+# production installer before npm installs it.
+resolve_npm_metadata() {
+  local spec="$1"
+  case "$spec" in
+    "$from_version")
+      RESOLVED_VERSION="$from_version"
+      RESOLVED_INTEGRITY="$from_integrity"
+      RESOLVED_TARBALL="$from_tarball"
+      RESOLVED_SIGNATURE_COUNT=1
+      ;;
+    "$OPENCLAW_VERSION")
+      RESOLVED_VERSION="$OPENCLAW_VERSION"
+      RESOLVED_INTEGRITY="$OPENCLAW_NPM_INTEGRITY"
+      RESOLVED_TARBALL="$OPENCLAW_TARBALL_URL"
+      RESOLVED_SIGNATURE_COUNT=1
+      ;;
+    *)
+      fail "unexpected-update-spec:${spec}"
+      ;;
+  esac
+  assert_release_tuple "$RESOLVED_VERSION" "$RESOLVED_INTEGRITY"
+}
+
+verify_openclaw_release_metadata() {
+  assert_release_tuple "$@"
+}
+
 upgrade_status=skipped
 case "$run_upgrade" in
   true)
@@ -157,50 +217,48 @@ case "$run_upgrade" in
     [[ "$from_version" != "$OPENCLAW_VERSION" ]] \
       || fail 'upgrade-from-equals-candidate'
 
-    # shellcheck disable=SC1091
-    source /usr/libexec/openclaw-appliance/lib.sh
+    load_transaction_modules
     verify_openclaw_release_metadata \
       "$from_version" "$from_integrity" "$from_release_commit"
     verify_openclaw_release_metadata \
       "$OPENCLAW_VERSION" "$OPENCLAW_NPM_INTEGRITY" "$OPENCLAW_RELEASE_COMMIT"
 
-    /usr/local/sbin/openclaw-appliance \
-      update stage "$from_version" --allow-untested \
+    command_update stage "$from_version" --allow-untested \
       || fail 'upgrade-step:stage-previous'
     mark_upgrade_step stage-previous
     assert_pending_release "$from_version" "$from_tarball" "$from_integrity"
 
-    /usr/local/sbin/openclaw-appliance update apply --allow-untested \
+    command_update apply --allow-untested \
       || fail 'upgrade-step:activate-previous'
     mark_upgrade_step activate-previous
     assert_active_release "$from_version"
     assert_gateway_stopped
 
-    /usr/local/sbin/openclaw-appliance update stage "$OPENCLAW_VERSION" \
+    command_update stage "$OPENCLAW_VERSION" \
       || fail 'upgrade-step:stage-candidate'
     mark_upgrade_step stage-candidate
     assert_pending_release \
       "$OPENCLAW_VERSION" "$OPENCLAW_TARBALL_URL" "$OPENCLAW_NPM_INTEGRITY"
 
-    /usr/local/sbin/openclaw-appliance update apply \
+    command_update apply \
       || fail 'upgrade-step:upgrade-candidate'
     mark_upgrade_step upgrade-candidate
     assert_active_release "$OPENCLAW_VERSION"
     assert_gateway_stopped
 
-    /usr/local/sbin/openclaw-appliance rollback "$from_version" \
+    command_rollback "$from_version" \
       || fail 'upgrade-step:rollback-previous'
     mark_upgrade_step rollback-previous
     assert_active_release "$from_version"
     assert_gateway_stopped
 
-    /usr/local/sbin/openclaw-appliance update stage "$OPENCLAW_VERSION" \
+    command_update stage "$OPENCLAW_VERSION" \
       || fail 'upgrade-step:restage-candidate'
     mark_upgrade_step restage-candidate
     assert_pending_release \
       "$OPENCLAW_VERSION" "$OPENCLAW_TARBALL_URL" "$OPENCLAW_NPM_INTEGRITY"
 
-    /usr/local/sbin/openclaw-appliance update apply \
+    command_update apply \
       || fail 'upgrade-step:reapply-candidate'
     mark_upgrade_step reapply-candidate
     assert_active_release "$OPENCLAW_VERSION"

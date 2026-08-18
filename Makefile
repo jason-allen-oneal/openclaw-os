@@ -3,7 +3,7 @@ ROOT := $(CURDIR)
 VERSION := $(shell cat VERSION)
 ARCH ?= amd64
 
-.PHONY: validate verify-artifacts test test-control-plane test-release-gate test-branch-cleanup test-iso-change-filter test-repository-settings test-install-vm release-policy sync-repo-metadata apply-repo-settings iso smoke install-smoke clean run tree
+.PHONY: validate verify-artifacts test test-control-plane test-release-gate test-branch-cleanup test-iso-change-filter test-repository-settings test-install-vm release-policy sync-repo-metadata apply-repo-settings iso smoke installed-system install-smoke clean run tree
 
 validate:
 	./scripts/validate.sh
@@ -56,6 +56,10 @@ iso: validate verify-artifacts
 smoke:
 	@test -f dist/openclaw-os-$(VERSION)-$(ARCH).iso || { echo "ISO not found. Run make iso first." >&2; exit 1; }
 	./scripts/smoke-iso.sh dist/openclaw-os-$(VERSION)-$(ARCH).iso
+
+installed-system:
+	@test -f dist/openclaw-os-$(VERSION)-$(ARCH).iso || { echo "ISO not found. Run make iso first." >&2; exit 1; }
+	./scripts/installed-system-test.sh dist/openclaw-os-$(VERSION)-$(ARCH).iso
 
 install-smoke:
 	@test -f dist/openclaw-os-$(VERSION)-$(ARCH).iso || { echo "ISO not found. Run make iso first." >&2; exit 1; }

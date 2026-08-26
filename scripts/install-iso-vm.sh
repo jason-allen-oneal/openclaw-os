@@ -149,8 +149,11 @@ replacements = {
 }
 for token, value in replacements.items():
     source = source.replace(token, value)
-if "@" in source:
-    raise SystemExit("unresolved template token")
+remaining = [token for token in replacements if token in source]
+if remaining:
+    raise SystemExit(
+        "unresolved template token(s): " + ", ".join(sorted(remaining))
+    )
 Path(os.environ["TEMPLATE_DESTINATION"]).write_text(source)
 PY
 }

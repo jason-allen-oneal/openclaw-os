@@ -109,6 +109,9 @@ grep -Fq 'SMOKE_RUN_INSTALL_TESTS:-${CI:-false}' "$SMOKE_SCRIPT" \
   || fail 'CI does not enable installed-system tests by default'
 grep -Fq 'scripts/installed-system-test.sh' "$SMOKE_SCRIPT" \
   || fail 'smoke harness does not invoke the matrix runner'
+grep -Fq 'Normalize generated artifact ownership' \
+  "$ROOT_DIR/.github/workflows/build-iso.yml" \
+  || fail 'CI does not restore runner ownership before installed-system evidence is written'
 if grep -Fq 'for firmware in uefi bios' "$SMOKE_SCRIPT"; then
   fail 'smoke harness still hard-codes firmware cases instead of using the matrix'
 fi

@@ -172,6 +172,14 @@ jobs:
               ./scripts/build-image.sh amd64
             '
 
+      - name: Normalize generated artifact ownership
+        if: ${{ needs.changes.outputs.build_required == 'true' }}
+        run: |
+          set -euo pipefail
+          test -d dist
+          sudo chown -R "$(id -u):$(id -g)" dist
+          test -w dist
+
       - name: Install UEFI smoke-test tools
         if: ${{ needs.changes.outputs.build_required == 'true' }}
         run: |

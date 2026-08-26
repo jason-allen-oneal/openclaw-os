@@ -1,0 +1,270 @@
+name: Publish alpha
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact successful main commit to publish
+        required: true
+        type: string
+      build_run_id:
+        description: Successful Build ISO run containing the exact candidate artifact
+        required: true
+        type: string
+      validate_run_id:
+        description: Successful Validate run for the same commit
+        required: true
+        type: string
+      tag:
+        description: Alpha tag; must equal v plus VERSION
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+  issues: read
+
+concurrency:
+  group: publish-alpha
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: alpha-release
+    steps:
+      - name: Validate requested identities
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          VALIDATE_RUN_ID: ${{ inputs.validate_run_id }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$VALIDATE_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$ ]]
+
+      - name: Check out the exact candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 0
+
+      - name: Require current protected main and unused release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_COMMIT" ]]
+          [[ "$(git rev-parse origin/main)" == "$SOURCE_COMMIT" ]] || {
+            echo 'source_commit is no longer current main' >&2
+            exit 1
+          }
+          [[ "$TAG" == "v$(cat VERSION)" ]]
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "tag already exists: $TAG" >&2
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release already exists: $TAG" >&2
+            exit 1
+          fi
+
+      - name: Require protected release-owner approval policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/environments/alpha-release" \
+            | jq -e '
+                .protection_rules
+                | any(
+                    .type == "required_reviewers"
+                    and .prevent_self_review == true
+                    and (.reviewers | length > 0)
+                  )
+              ' >/dev/null || {
+                echo 'alpha-release must require a reviewer and prevent self-review' >&2
+                exit 1
+              }
+
+      - name: Resolve successful immutable workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          VALIDATE_RUN_ID: ${{ inputs.validate_run_id }}
+        run: |
+          set -euo pipefail
+          for spec in "build:$BUILD_RUN_ID" "validate:$VALIDATE_RUN_ID"; do
+            kind="${spec%%:*}"
+            run_id="${spec#*:}"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" \
+              --jq '{
+                conclusion,
+                event,
+                headBranch: .head_branch,
+                headSha: .head_sha,
+                url: .html_url,
+                workflowName: .name,
+                workflowPath: .path,
+                runAttempt: .run_attempt,
+                repository: .repository.full_name,
+                createdAt: .created_at,
+                updatedAt: .updated_at
+              }' >"$RUNNER_TEMP/${kind}-run.json"
+          done
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID/jobs" \
+            --paginate --slurp \
+            --jq '[.[].jobs[] | {
+              name,
+              conclusion,
+              steps: [.steps[] | {name, conclusion}]
+            }]' >"$RUNNER_TEMP/build-jobs.json"
+          jq --slurpfile jobs "$RUNNER_TEMP/build-jobs.json" \
+            '. + {jobs: $jobs[0]}' \
+            "$RUNNER_TEMP/build-run.json" \
+            >"$RUNNER_TEMP/build-run.with-jobs.json"
+          mv "$RUNNER_TEMP/build-run.with-jobs.json" "$RUNNER_TEMP/build-run.json"
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID/artifacts" \
+            --jq '[.artifacts[] | select(.name == "openclaw-os-amd64")] | if length == 1 then .[0] else error("candidate artifact is missing or ambiguous") end | {
+              id,
+              name,
+              expired,
+              sizeInBytes: .size_in_bytes,
+              archiveDigest: .digest,
+              createdAt: .created_at,
+              workflowRunHeadSha: .workflow_run.head_sha
+            }' >"$RUNNER_TEMP/artifact.json"
+
+      - name: Download the exact tested artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name openclaw-os-amd64 \
+            --dir dist
+
+      - name: Snapshot release blockers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          : >"$RUNNER_TEMP/issues.jsonl"
+          for issue in 6 7 8 9 10 11 12 13 14; do
+            gh issue view "$issue" --repo "$GITHUB_REPOSITORY" \
+              --json number,state,url \
+              --jq '{number, state: (.state | ascii_downcase), url}' \
+              >>"$RUNNER_TEMP/issues.jsonl"
+          done
+          jq -s 'sort_by(.number)' "$RUNNER_TEMP/issues.jsonl" \
+            >"$RUNNER_TEMP/issues.json"
+
+      - name: Bind and validate release evidence
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          TAG: ${{ inputs.tag }}
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          version="$(cat VERSION)"
+          notes_json="docs/releases/${version}.json"
+          test -f "$notes_json"
+          generated_at="$(date --utc +%Y-%m-%dT%H:%M:%SZ)"
+          ./scripts/prepare-release-evidence.sh \
+            dist "$TAG" "$SOURCE_COMMIT" \
+            "$RUNNER_TEMP/build-run.json" \
+            "$RUNNER_TEMP/validate-run.json" \
+            "$RUNNER_TEMP/artifact.json" \
+            "$RUNNER_TEMP/issues.json" \
+            "$notes_json" \
+            "$GITHUB_REPOSITORY" \
+            "$generated_at" \
+            "$WORKFLOW_RUN_URL"
+
+      - name: Create a draft release from the exact candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version="$(cat VERSION)"
+          prefix="openclaw-os-${version}-amd64"
+          notes="docs/releases/${version}.md"
+          test -f "$notes"
+          git fetch --no-tags origin main
+          [[ "$(git rev-parse origin/main)" == "$SOURCE_COMMIT" ]] || {
+            echo 'main changed after candidate verification; refusing publication' >&2
+            exit 1
+          }
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_COMMIT" \
+            --title "OpenClaw OS ${version}" \
+            --notes-file "$notes" \
+            --draft \
+            --prerelease \
+            "dist/${prefix}.iso" \
+            "dist/${prefix}.iso.sha256" \
+            "dist/${prefix}.sbom.spdx.json" \
+            "dist/${prefix}.sbom.spdx.json.sha256" \
+            "dist/${prefix}.build.json" \
+            "dist/${prefix}.build-run.json" \
+            "dist/${prefix}.installed-system-evidence.build.json" \
+            "dist/${prefix}.installed-system-checksum.build.json" \
+            "dist/${prefix}.release-notes.json" \
+            "dist/${prefix}.release-evidence.json"
+
+      - name: Verify the draft and publish it as a prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version="$(cat VERSION)"
+          prefix="openclaw-os-${version}-amd64"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isPrerelease,tagName,targetCommitish,url \
+            | jq -e --arg tag "$TAG" '
+                .isDraft == true
+                and .isPrerelease == true
+                and .tagName == $tag
+                and .targetCommitish == env.SOURCE_COMMIT
+              ' >/dev/null
+          assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets)"
+          for name in \
+            "${prefix}.iso" \
+            "${prefix}.iso.sha256" \
+            "${prefix}.sbom.spdx.json" \
+            "${prefix}.sbom.spdx.json.sha256" \
+            "${prefix}.build.json" \
+            "${prefix}.build-run.json" \
+            "${prefix}.installed-system-evidence.build.json" \
+            "${prefix}.installed-system-checksum.build.json" \
+            "${prefix}.release-notes.json" \
+            "${prefix}.release-evidence.json"; do
+            local_size="$(stat -c '%s' "dist/$name")"
+            jq -e --arg name "$name" --argjson size "$local_size" \
+              '.assets | any(.name == $name and .size == $size)' \
+              <<<"$assets" >/dev/null
+          done
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --draft=false --prerelease
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isPrerelease,tagName \
+            | jq -e --arg tag "$TAG" '
+                .isDraft == false and .isPrerelease == true and .tagName == $tag
+              ' >/dev/null

@@ -7,11 +7,38 @@ source /usr/share/openclaw-os/release.env
 created="$(date --utc +%Y-%m-%dT%H:%M:%SZ)"
 namespace_uuid="$(cat /proc/sys/kernel/random/uuid)"
 packages_file="$(mktemp)"
-trap 'rm -f "$packages_file"' EXIT
+npm_packages_file="$(mktemp)"
+trap 'rm -f "$packages_file" "$npm_packages_file"' EXIT
 
 control_plane_package=/usr/lib/openclaw-os/control-plane/package.json
 control_plane_version="$(jq -er '.version | select(type == "string" and length > 0)' "$control_plane_package")"
 dpkg-query -W -f='${binary:Package}\t${Version}\t${Architecture}\n' | sort >"$packages_file"
+
+openclaw_prefix="/opt/openclaw/releases/${OPENCLAW_VERSION}"
+[[ -x /opt/node/current/bin/npm && -d "$openclaw_prefix/lib/node_modules" ]] || {
+  echo "OpenClaw production dependency tree is missing: $openclaw_prefix" >&2
+  exit 1
+}
+PATH="/opt/node/current/bin:/usr/bin:/bin" \
+  /opt/node/current/bin/npm ls --global --all --omit=dev --json \
+    --prefix "$openclaw_prefix" \
+  | jq -r '
+      def packages:
+        (.dependencies // {})
+        | to_entries[]
+        | select(.value.version | type == "string" and length > 0)
+        | ({name: .key, version: .value.version}), (.value | packages);
+      [packages]
+      | unique_by([.name, .version])
+      | .[]
+      | [.name, .version]
+      | @tsv
+    ' \
+  | LC_ALL=C sort -u >"$npm_packages_file"
+[[ -s "$npm_packages_file" ]] || {
+  echo "OpenClaw production dependency inventory is empty" >&2
+  exit 1
+}
 
 jq -Rn \
   --arg created "$created" \
@@ -21,6 +48,7 @@ jq -Rn \
   --arg openclaw_version "$OPENCLAW_VERSION" \
   --arg control_plane_version "$control_plane_version" \
   --slurpfile build /usr/share/openclaw-os/build-info.json \
+  --rawfile npm_packages "$npm_packages_file" \
   '
   [inputs | split("\t") | {
     name: .[0],
@@ -42,6 +70,25 @@ jq -Rn \
         referenceLocator: ("pkg:deb/debian/" + (.value.name | @uri) + "@" + (.value.versionInfo | @uri) + "?arch=" + (.value.architecture | @uri))
       }]
     })) as $debian_packages
+  | ($npm_packages
+      | split("\n")
+      | map(select(length > 0) | split("\t") | {name: .[0], versionInfo: .[1]})
+      | to_entries
+      | map({
+          SPDXID: ("SPDXRef-NpmPackage-" + (.key | tostring)),
+          name: .value.name,
+          versionInfo: .value.versionInfo,
+          downloadLocation: "https://registry.npmjs.org/",
+          filesAnalyzed: false,
+          licenseConcluded: "NOASSERTION",
+          licenseDeclared: "NOASSERTION",
+          supplier: "NOASSERTION",
+          externalRefs: [{
+            referenceCategory: "PACKAGE-MANAGER",
+            referenceType: "purl",
+            referenceLocator: ("pkg:npm/" + (.value.name | @uri) + "@" + (.value.versionInfo | @uri))
+          }]
+        })) as $npm_dependency_packages
   | {
       spdxVersion: "SPDX-2.3",
       dataLicense: "CC0-1.0",
@@ -87,13 +134,17 @@ jq -Rn \
         filesAnalyzed: false,
         licenseConcluded: "MIT",
         licenseDeclared: "MIT"
-      }] + $debian_packages),
+      }] + $debian_packages + $npm_dependency_packages),
       relationships: ([
         {spdxElementId: "SPDXRef-OpenClawOS", relationshipType: "CONTAINS", relatedSpdxElement: "SPDXRef-NodeJS"},
         {spdxElementId: "SPDXRef-OpenClawOS", relationshipType: "CONTAINS", relatedSpdxElement: "SPDXRef-OpenClaw"},
         {spdxElementId: "SPDXRef-OpenClawOS", relationshipType: "CONTAINS", relatedSpdxElement: "SPDXRef-OpenClawOSControlPlane"}
       ] + ($debian_packages | map({
         spdxElementId: "SPDXRef-OpenClawOS",
+        relationshipType: "CONTAINS",
+        relatedSpdxElement: .SPDXID
+      })) + ($npm_dependency_packages | map({
+        spdxElementId: "SPDXRef-OpenClaw",
         relationshipType: "CONTAINS",
         relatedSpdxElement: .SPDXID
       }))),
@@ -107,5 +158,9 @@ jq -Rn \
   ' "$packages_file" >/usr/share/openclaw-os/sbom.spdx.json
 
 chmod 0644 /usr/share/openclaw-os/sbom.spdx.json
-jq -e '.spdxVersion == "SPDX-2.3" and (.packages | any(.SPDXID == "SPDXRef-OpenClawOSControlPlane"))' \
+jq -e '
+  .spdxVersion == "SPDX-2.3"
+  and (.packages | any(.SPDXID == "SPDXRef-OpenClawOSControlPlane"))
+  and ([.packages[] | select(.SPDXID | startswith("SPDXRef-NpmPackage-"))] | length > 0)
+' \
   /usr/share/openclaw-os/sbom.spdx.json >/dev/null

@@ -4,8 +4,6 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    tags:
-      - 'v*'
     paths:
       - '.github/workflows/build-iso.yml'
       - 'VERSION'
@@ -251,7 +249,7 @@ jobs:
           name: openclaw-os-uefi-smoke-${{ github.sha }}
           path: ${{ runner.temp }}/openclaw-os-uefi-smoke/
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 30
 
       - name: Upload unverified ISO debug artifact
         if: ${{ always() && needs.changes.outputs.build_required == 'true' && (steps.boot_config.outcome == 'failure' || steps.uefi_smoke.outcome == 'failure') }}
@@ -275,4 +273,4 @@ jobs:
             dist/openclaw-os-*.build.json
             dist/build-*.log
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30

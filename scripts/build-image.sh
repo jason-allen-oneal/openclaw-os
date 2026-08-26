@@ -107,7 +107,11 @@ xorriso -osirrox on -indev "$target_iso" \
   >/dev/null 2>&1
 unsquashfs -cat "$extract_dir/filesystem.squashfs" \
   usr/share/openclaw-os/sbom.spdx.json >"$sbom_target"
-jq -e '.spdxVersion == "SPDX-2.3" and (.packages | any(.SPDXID == "SPDXRef-OpenClawOSControlPlane"))' "$sbom_target" >/dev/null
+jq -e '
+  .spdxVersion == "SPDX-2.3"
+  and (.packages | any(.SPDXID == "SPDXRef-OpenClawOSControlPlane"))
+  and ([.packages[] | select(.SPDXID | startswith("SPDXRef-NpmPackage-"))] | length > 0)
+' "$sbom_target" >/dev/null
 (
   cd "$DIST_DIR"
   sha256sum "$(basename "$sbom_target")" >"$(basename "$sbom_target").sha256"

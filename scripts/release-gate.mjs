@@ -190,6 +190,18 @@ export function validateEvidence(policyInput, evidence, now = new Date()) {
     "artifact source commit differs from evidence commit"
   );
   assert(
+    Number.isInteger(evidence.artifact.actionsArtifact?.id) &&
+      evidence.artifact.actionsArtifact.id > 0 &&
+      evidence.artifact.actionsArtifact.name === "openclaw-os-amd64" &&
+      evidence.artifact.actionsArtifact.expired === false &&
+      /^sha256:[a-f0-9]{64}$/.test(
+        evidence.artifact.actionsArtifact.archiveDigest ?? ""
+      ) &&
+      evidence.artifact.actionsArtifact.workflowRunHeadSha ===
+        evidence.sourceCommit,
+    "Actions artifact identity is invalid"
+  );
+  assert(
     typeof evidence.artifact.name === "string" &&
       evidence.artifact.name.endsWith(".iso"),
     "artifact name must identify an ISO"
@@ -202,10 +214,17 @@ export function validateEvidence(policyInput, evidence, now = new Date()) {
     ageHours >= 0 && ageHours <= policy.evidence.maximumAgeHours,
     "release evidence is stale or from the future"
   );
+  const builtAt = new Date(evidence.artifact?.builtAt);
+  assert(!Number.isNaN(builtAt.getTime()), "artifact builtAt must be an ISO timestamp");
   assert(
-    Number.isFinite(evidence.soakHours) &&
-      evidence.soakHours >= channel.minimumSoakHours,
-    "minimum soak period has not elapsed"
+    builtAt.getTime() <= generatedAt.getTime(),
+    "artifact builtAt is after evidence generation"
+  );
+  const soakHours = (now.getTime() - builtAt.getTime()) / 3_600_000;
+  assert(soakHours >= channel.minimumSoakHours, "minimum soak period has not elapsed");
+  assert(
+    evidence.soakHours === undefined,
+    "soakHours must be derived from artifact builtAt"
   );
   assert(
     Array.isArray(evidence.waivers) && evidence.waivers.length === 0,
@@ -213,21 +232,59 @@ export function validateEvidence(policyInput, evidence, now = new Date()) {
   );
 
   for (const check of channel.requiredChecks) {
+    const record = evidence.checks?.[check];
     assert(
-      evidence.checks?.[check] === "success",
+      record?.status === "success" &&
+        record?.headSha === evidence.sourceCommit &&
+        /^https:\/\/github\.com\/[^/]+\/[^/]+\/actions\/runs\/[0-9]+$/.test(
+          record?.runUrl ?? ""
+        ),
       `required check did not pass: ${check}`
     );
   }
 
-  const evidenceNames = uniqueStrings(evidence.evidence, "evidence.evidence");
+  assert(Array.isArray(evidence.evidence), "evidence.evidence must be an array");
+  const evidenceNames = uniqueStrings(
+    evidence.evidence.map((record) => record?.name),
+    "evidence names"
+  );
+  for (const record of evidence.evidence) {
+    assert(
+      /^https:\/\/github\.com\/[^/]+\/[^/]+\/(actions\/runs\/[0-9]+|releases\/tag\/[^/]+)(?:#.*)?$/.test(
+        record?.url ?? ""
+      ),
+      `evidence URL is not immutable GitHub evidence: ${record?.name ?? "unknown"}`
+    );
+    assert(
+      /^[a-f0-9]{64}$/.test(record?.sha256 ?? ""),
+      `evidence digest is invalid: ${record?.name ?? "unknown"}`
+    );
+  }
   for (const item of channel.requiredEvidence) {
     assert(evidenceNames.includes(item), `missing required evidence: ${item}`);
   }
 
-  const closedIssues = uniqueIntegers(
-    evidence.closedIssues,
-    "evidence.closedIssues"
+  assert(Array.isArray(evidence.issues), "evidence.issues must be an array");
+  const issueNumbers = uniqueIntegers(
+    evidence.issues.map((issue) => issue?.number),
+    "evidence issue numbers"
   );
+  const closedIssues = evidence.issues
+    .filter((issue) => issue?.state === "closed")
+    .map((issue) => issue.number);
+  const openBlockers = evidence.issues
+    .filter((issue) => issue?.state === "open")
+    .map((issue) => issue.number);
+  for (const issue of evidence.issues) {
+    assert(
+      issue.state === "open" || issue.state === "closed",
+      `invalid issue state: #${issue.number}`
+    );
+    assert(
+      /^https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/[0-9]+$/.test(issue.url ?? ""),
+      `invalid issue URL: #${issue.number}`
+    );
+  }
   for (const issue of channel.requiredClosedIssues) {
     assert(
       closedIssues.includes(issue),
@@ -235,10 +292,6 @@ export function validateEvidence(policyInput, evidence, now = new Date()) {
     );
   }
 
-  const openBlockers = uniqueIntegers(
-    evidence.openBlockers,
-    "evidence.openBlockers"
-  );
   for (const issue of openBlockers) {
     assert(
       channel.allowedOpenBlockers.includes(issue),
@@ -255,6 +308,15 @@ export function validateEvidence(policyInput, evidence, now = new Date()) {
       `release-blocker snapshot is incomplete: #${issue}`
     );
   }
+  const expectedIssueNumbers = new Set([
+    ...channel.requiredClosedIssues,
+    ...channel.allowedOpenBlockers
+  ]);
+  assert(
+    issueNumbers.length === expectedIssueNumbers.size &&
+      issueNumbers.every((issue) => expectedIssueNumbers.has(issue)),
+    "release-blocker snapshot contains unexpected or missing issues"
+  );
 
   assert(Array.isArray(evidence.approvals), "evidence.approvals must be an array");
   const roles = uniqueStrings(
@@ -275,6 +337,13 @@ export function validateEvidence(policyInput, evidence, now = new Date()) {
       approvedAt.getTime() <= generatedAt.getTime() &&
         approvedAt.getTime() <= now.getTime(),
       "approval timestamp is after the evidence timestamp or in the future"
+    );
+    assert(
+      approval.method === "protected-environment" &&
+        /^https:\/\/github\.com\/[^/]+\/[^/]+\/actions\/runs\/[0-9]+$/.test(
+          approval.runUrl ?? ""
+        ),
+      "release approval must come from a protected GitHub environment"
     );
   }
 

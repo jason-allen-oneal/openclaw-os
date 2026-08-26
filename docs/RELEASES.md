@@ -49,6 +49,13 @@ Alpha is for technical evaluators. It requires a verified ISO, checksums, SBOM,
 UEFI live boot, a clean VM installation, compatibility evidence, update code
 rollback evidence, known limitations, and release-owner approval.
 
+The first alpha is explicitly a lab release. Issues #6, #7, and #8 may remain
+open at alpha only because their own release-impact contracts block production
+signing, supported compatibility, and broadly supported update channels rather
+than a checksummed lab build. They remain visible blockers and are inherited by
+later promotion decisions; the alpha ships no trusted first-party OS update
+feed and must describe itself as unsigned.
+
 ### Beta
 
 Beta inherits every alpha requirement. It additionally requires a tested
@@ -69,6 +76,19 @@ Promotion records must link to retained artifacts and test logs. The release
 record must include the ISO checksum, SBOM checksum, source commit, signing
 identity, tested hardware, supported upgrade paths, rollback procedure, and
 known limitations.
+
+## Alpha publication transaction
+
+`.github/workflows/publish-alpha.yml` is the only supported alpha publication
+path. It accepts exact successful Build ISO and Validate run IDs for the current
+`main` commit, downloads the retained candidate instead of rebuilding it,
+verifies its checksums, build manifest, package-level SBOM, installed-system
+evidence, issue snapshot, release notes, tag/version identity, and derived
+24-hour soak period, then creates a non-overwriting GitHub prerelease. The
+workflow emits and attaches the validated release-evidence document.
+
+Tag pushes do not build images. A tag and release are created only after the
+candidate passes the publication transaction.
 
 ## Emergency withdrawal
 

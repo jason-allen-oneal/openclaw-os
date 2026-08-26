@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "openclawOsVersion": "0.1.0",
+  "openclawOsVersion": "0.1.0-alpha.1",
   "gatewayProtocol": {
     "minimum": 4,
     "maximum": 4,

@@ -2,7 +2,7 @@
 set -eu
 
 ARCHITECTURE="${ARCHITECTURE:-amd64}"
-VERSION="${OPENCLAW_OS_VERSION:-0.1.0}"
+VERSION="${OPENCLAW_OS_VERSION:-0.1.0-alpha.1}"
 
 lb config noauto \
   --mode debian \

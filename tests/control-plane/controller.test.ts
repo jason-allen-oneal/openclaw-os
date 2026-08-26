@@ -6,7 +6,7 @@ import type { CompatibilityManifest } from "../../services/controller/src/compat
 
 const compatibility: CompatibilityManifest = {
   schemaVersion: 1,
-  openclawOsVersion: "0.1.0",
+  openclawOsVersion: "0.1.0-alpha.1",
   controlPlanePhase: 1,
   gatewayProtocol: {
     minimum: 4,

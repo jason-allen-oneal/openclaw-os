@@ -21,6 +21,7 @@ required_files=(
   package.json
   config/openclaw-compatibility.json
   docs/adr/0001-openclaw-os-control-plane.md
+  .github/workflows/publish-alpha.yml
   packages/appliance-contracts/src/index.ts
   packages/gateway-client/src/index.ts
   services/controller/src/main.ts
@@ -47,6 +48,7 @@ required_files=(
   scripts/test-control-plane.sh
   scripts/verify-artifacts.sh
   scripts/smoke-iso.sh
+  scripts/prepare-release-evidence.sh
   tests/appliance-test.sh
   tests/control-plane/gateway-client.test.ts
   tests/control-plane/hostd.test.ts
@@ -205,6 +207,14 @@ containerfile="$ROOT_DIR/image/config/includes.chroot/usr/share/openclaw-os/sand
 grep -Eq '^FROM .+@sha256:[a-f0-9]{64}$' "$containerfile" || fail "sandbox base image is not digest pinned"
 build_workflow="$ROOT_DIR/.github/workflows/build-iso.yml"
 grep -Eq 'DEBIAN_BUILD_IMAGE: debian:13-slim@sha256:[a-f0-9]{64}$' "$build_workflow" || fail "CI Debian build image is not digest pinned"
+
+publish_workflow="$ROOT_DIR/.github/workflows/publish-alpha.yml"
+grep -q 'gh run download' "$publish_workflow" || fail "alpha publication must promote an existing Actions artifact"
+if grep -qE '(make iso|build-image\.sh|lb build)' "$publish_workflow"; then
+  fail "alpha publication workflow must not rebuild the candidate"
+fi
+grep -q -- '--prerelease' "$publish_workflow" || fail "alpha publication must create a prerelease"
+grep -q 'source_commit is no longer current main' "$publish_workflow" || fail "alpha publication must bind current main"
 
 note "checking GitHub Actions pins"
 while IFS= read -r action_line; do

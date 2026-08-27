@@ -80,15 +80,49 @@ jq -n --arg commit "$COMMIT" '{
 
 jq -n '[6, 7, 8, 9, 10, 11, 12, 13, 14] | map({
   number: .,
-  state: (if . == 12 or . == 13 then "closed" else "open" end),
+  state: (if . == 12 or . == 14 then "closed" else "open" end),
   url: ("https://github.com/example/openclaw-os/issues/" + tostring)
 })' >"$scratch/issues.json"
+
+observed_at="$(date --utc --date='1 minute ago' +%Y-%m-%dT%H:%M:%SZ)"
+jq -n '[
+  {
+    state: "rejected",
+    user: {login: "unrelated-reviewer"},
+    environments: [{name: "alpha-release"}]
+  },
+  {
+    state: "approved",
+    user: {login: "release-reviewer"},
+    environments: [{name: "alpha-release"}]
+  }
+]' >"$scratch/approval-history.json"
+jq -e \
+  --arg run_url https://github.com/example/openclaw-os/actions/runs/3 \
+  --arg actor workflow-dispatcher \
+  --arg observed_at "$observed_at" \
+  --argjson job_id 4 \
+  --argjson run_attempt 1 \
+  -f "$ROOT_DIR/scripts/resolve-release-approval.jq" \
+  "$scratch/approval-history.json" >"$scratch/approval.json"
+if jq -e \
+    --arg run_url https://github.com/example/openclaw-os/actions/runs/3 \
+    --arg actor release-reviewer \
+    --arg observed_at "$observed_at" \
+    --argjson job_id 4 \
+    --argjson run_attempt 1 \
+    -f "$ROOT_DIR/scripts/resolve-release-approval.jq" \
+    "$scratch/approval-history.json" >/dev/null; then
+  echo 'self-approved release review was accepted' >&2
+  exit 1
+fi
 
 "$ROOT_DIR/scripts/prepare-release-evidence.sh" \
   "$dist" "v$VERSION" "$COMMIT" \
   "$scratch/build-run.json" "$scratch/validate-run.json" \
   "$scratch/artifact.json" \
-  "$scratch/issues.json" "$ROOT_DIR/docs/releases/${VERSION}.json" \
+  "$scratch/issues.json" "$scratch/approval.json" \
+  "$ROOT_DIR/docs/releases/${VERSION}.json" \
   example/openclaw-os "$generated_at" \
   https://github.com/example/openclaw-os/actions/runs/3
 
@@ -100,6 +134,22 @@ jq -e --arg commit "$COMMIT" '
   and (.issues | length == 9)
 ' "$evidence" >/dev/null
 
+cp "$scratch/approval.json" "$scratch/invalid-approval.json"
+jq '.method = "manual"' "$scratch/invalid-approval.json" \
+  >"$scratch/approval.json"
+if "$ROOT_DIR/scripts/prepare-release-evidence.sh" \
+    "$dist" "v$VERSION" "$COMMIT" \
+    "$scratch/build-run.json" "$scratch/validate-run.json" \
+    "$scratch/artifact.json" \
+    "$scratch/issues.json" "$scratch/approval.json" \
+    "$ROOT_DIR/docs/releases/${VERSION}.json" \
+    example/openclaw-os "$generated_at" \
+    https://github.com/example/openclaw-os/actions/runs/3 >/dev/null 2>&1; then
+  echo 'unprotected release approval was accepted' >&2
+  exit 1
+fi
+mv "$scratch/invalid-approval.json" "$scratch/approval.json"
+
 cp "$dist/${PREFIX}.build.json" "$scratch/tampered-build.json"
 jq '.gitCommit = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
   "$scratch/tampered-build.json" >"$dist/${PREFIX}.build.json"
@@ -107,7 +157,8 @@ if "$ROOT_DIR/scripts/prepare-release-evidence.sh" \
     "$dist" "v$VERSION" "$COMMIT" \
     "$scratch/build-run.json" "$scratch/validate-run.json" \
     "$scratch/artifact.json" \
-    "$scratch/issues.json" "$ROOT_DIR/docs/releases/${VERSION}.json" \
+    "$scratch/issues.json" "$scratch/approval.json" \
+    "$ROOT_DIR/docs/releases/${VERSION}.json" \
     example/openclaw-os "$generated_at" \
     https://github.com/example/openclaw-os/actions/runs/3 >/dev/null 2>&1; then
   echo 'tampered build manifest was accepted' >&2

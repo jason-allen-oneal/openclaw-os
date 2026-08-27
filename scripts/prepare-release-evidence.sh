@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-if [[ "$#" -ne 11 ]]; then
-  echo "usage: $0 DIST TAG COMMIT BUILD_RUN_JSON VALIDATE_RUN_JSON ARTIFACT_JSON ISSUES_JSON NOTES_JSON REPOSITORY GENERATED_AT WORKFLOW_RUN_URL" >&2
+if [[ "$#" -ne 12 ]]; then
+  echo "usage: $0 DIST TAG COMMIT BUILD_RUN_JSON VALIDATE_RUN_JSON ARTIFACT_JSON ISSUES_JSON APPROVAL_JSON NOTES_JSON REPOSITORY GENERATED_AT WORKFLOW_RUN_URL" >&2
   exit 2
 fi
 
@@ -13,10 +13,11 @@ BUILD_RUN_JSON="$4"
 VALIDATE_RUN_JSON="$5"
 ARTIFACT_JSON="$6"
 ISSUES_JSON="$7"
-NOTES_JSON="$8"
-REPOSITORY="$9"
-GENERATED_AT="${10}"
-WORKFLOW_RUN_URL="${11}"
+APPROVAL_JSON="$8"
+NOTES_JSON="$9"
+REPOSITORY="${10}"
+GENERATED_AT="${11}"
+WORKFLOW_RUN_URL="${12}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="$(<"$ROOT_DIR/VERSION")"
 PREFIX="openclaw-os-${VERSION}-amd64"
@@ -44,7 +45,8 @@ installed_checksum="$DIST_DIR/${PREFIX}.installed-system-checksum.build.json"
 
 for file in "$iso" "$iso_checksum" "$sbom" "$sbom_checksum" \
   "$build_manifest" "$installed_evidence" "$installed_checksum" "$BUILD_RUN_JSON" \
-  "$VALIDATE_RUN_JSON" "$ARTIFACT_JSON" "$ISSUES_JSON" "$NOTES_JSON"; do
+  "$VALIDATE_RUN_JSON" "$ARTIFACT_JSON" "$ISSUES_JSON" "$APPROVAL_JSON" \
+  "$NOTES_JSON"; do
   [[ -f "$file" && ! -L "$file" ]] || fail "missing or unsafe file: $file"
 done
 
@@ -141,6 +143,17 @@ jq -e '
   and length > 0
   and all(.[]; (.number | type == "number") and (.state == "open" or .state == "closed") and (.url | type == "string"))
 ' "$ISSUES_JSON" >/dev/null || fail "issue snapshot is invalid"
+jq -e --arg run_url "$WORKFLOW_RUN_URL" '
+  .role == "release-owner"
+  and .method == "protected-environment"
+  and .environment == "alpha-release"
+  and .runUrl == $run_url
+  and (.login | type == "string" and length > 0)
+  and (.observedAt | type == "string" and length > 0)
+  and .timestampSource == "protected-job-start"
+  and (.jobId | type == "number" and . > 0)
+  and .runAttempt == 1
+' "$APPROVAL_JSON" >/dev/null || fail "protected release approval is invalid"
 
 jq -n \
   --arg generated_at "$GENERATED_AT" \
@@ -160,6 +173,7 @@ jq -n \
   --arg release_url "https://github.com/${REPOSITORY}/releases/tag/${TAG}" \
   --slurpfile actions_artifact "$ARTIFACT_JSON" \
   --slurpfile issues "$ISSUES_JSON" \
+  --slurpfile approval "$APPROVAL_JSON" \
   --slurpfile notes "$NOTES_JSON" \
   '{
     schemaVersion: 1,
@@ -189,13 +203,7 @@ jq -n \
       {name: "known-limitations", url: ($release_url + "#known-limitations"), sha256: $notes_digest}
     ],
     issues: $issues[0],
-    approvals: [{
-      role: "release-owner",
-      login: "alpha-release-environment",
-      approvedAt: $generated_at,
-      method: "protected-environment",
-      runUrl: $workflow_run_url
-    }],
+    approvals: [$approval[0]],
     waivers: [],
     releaseNotes: $notes[0]
   }' >"$DIST_DIR/${PREFIX}.release-evidence.json"

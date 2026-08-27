@@ -46,15 +46,18 @@ The gate fails closed when:
 ### Alpha
 
 Alpha is for technical evaluators. It requires a verified ISO, checksums, SBOM,
-UEFI live boot, a clean VM installation, compatibility evidence, update code
-rollback evidence, known limitations, and release-owner approval.
+UEFI live boot, clean UEFI and BIOS VM installations, OpenClaw application
+update-and-rollback evidence, known limitations, and release-owner approval.
 
-The first alpha is explicitly a lab release. Issues #6, #7, and #8 may remain
-open at alpha only because their own release-impact contracts block production
-signing, supported compatibility, and broadly supported update channels rather
-than a checksummed lab build. They remain visible blockers and are inherited by
-later promotion decisions; the alpha ships no trusted first-party OS update
-feed and must describe itself as unsigned.
+The first alpha is explicitly a lab release. Issues #6 through #11, #13, and
+#14 may remain recorded blockers where the machine-readable policy permits it.
+Those issues cover production signing, supported compatibility and update
+channels, base-OS recovery, Secure Boot, physical hardware, repository
+administration, and upgrade testing from a prior OpenClaw OS release. The last
+of those cannot exist before the first published alpha, so #13 becomes a
+required closed issue at beta. Every open blocker remains in the evidence
+snapshot; the alpha ships no trusted first-party OS update feed and must
+describe itself as unsigned.
 
 ### Beta
 
@@ -85,7 +88,12 @@ path. It accepts exact successful Build ISO and Validate run IDs for the current
 verifies its checksums, build manifest, package-level SBOM, installed-system
 evidence, issue snapshot, release notes, tag/version identity, and derived
 24-hour soak period, then creates a non-overwriting GitHub prerelease. The
-workflow emits and attaches the validated release-evidence document.
+approval record binds GitHub's actual environment reviewer to the protected
+job-start timestamp at which that approval was already effective. The workflow
+creates the tag with create-if-absent semantics, verifies every uploaded asset's
+remote SHA-256 digest, and publishes only while repository-level immutable
+releases remain enabled. It emits and attaches the validated release-evidence
+document.
 
 Tag pushes do not build images. A tag and release are created only after the
 candidate passes the publication transaction.

@@ -49,6 +49,7 @@ required_files=(
   scripts/verify-artifacts.sh
   scripts/smoke-iso.sh
   scripts/prepare-release-evidence.sh
+  scripts/resolve-release-approval.jq
   tests/appliance-test.sh
   tests/control-plane/gateway-client.test.ts
   tests/control-plane/hostd.test.ts
@@ -215,6 +216,14 @@ if grep -qE '(make iso|build-image\.sh|lb build)' "$publish_workflow"; then
 fi
 grep -q -- '--prerelease' "$publish_workflow" || fail "alpha publication must create a prerelease"
 grep -q 'source_commit is no longer current main' "$publish_workflow" || fail "alpha publication must bind current main"
+grep -q 'GITHUB_RUN_ATTEMPT' "$publish_workflow" || fail "alpha publication must reject approval reuse across reruns"
+grep -q 'can_admins_bypass == false' "$publish_workflow" || fail "alpha publication must reject environment bypass"
+grep -q 'deployment-branch-policies' "$publish_workflow" || fail "alpha publication must require a main-only environment"
+grep -q 'immutable-releases' "$publish_workflow" || fail "alpha publication must require immutable releases"
+grep -q 'git/refs' "$publish_workflow" || fail "alpha publication must create the candidate tag atomically"
+grep -q -- '--verify-tag' "$publish_workflow" || fail "alpha publication must require the pre-created tag"
+grep -Fq '.digest == $digest' "$publish_workflow" || fail "alpha publication must verify remote asset digests"
+grep -q '/approvals' "$publish_workflow" || fail "alpha publication must resolve GitHub approval history"
 
 note "checking GitHub Actions pins"
 while IFS= read -r action_line; do

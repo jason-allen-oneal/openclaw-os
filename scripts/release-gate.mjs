@@ -331,15 +331,20 @@ export function validateEvidence(policyInput, evidence, now = new Date()) {
       typeof approval.login === "string" && approval.login.trim().length > 0,
       "approval login is required"
     );
-    const approvedAt = new Date(approval.approvedAt);
-    assert(!Number.isNaN(approvedAt.getTime()), "approval timestamp is invalid");
+    const observedAt = new Date(approval.observedAt);
+    assert(!Number.isNaN(observedAt.getTime()), "approval observation timestamp is invalid");
     assert(
-      approvedAt.getTime() <= generatedAt.getTime() &&
-        approvedAt.getTime() <= now.getTime(),
-      "approval timestamp is after the evidence timestamp or in the future"
+      observedAt.getTime() <= generatedAt.getTime() &&
+        observedAt.getTime() <= now.getTime(),
+      "approval observation is after the evidence timestamp or in the future"
     );
     assert(
       approval.method === "protected-environment" &&
+        approval.environment === "alpha-release" &&
+        approval.timestampSource === "protected-job-start" &&
+        Number.isInteger(approval.jobId) &&
+        approval.jobId > 0 &&
+        approval.runAttempt === 1 &&
         /^https:\/\/github\.com\/[^/]+\/[^/]+\/actions\/runs\/[0-9]+$/.test(
           approval.runUrl ?? ""
         ),

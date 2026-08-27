@@ -62,12 +62,12 @@ function alphaEvidence() {
       sha256: "c".repeat(64)
     })),
     issues: [
-      ...[12, 13].map((number) => ({
+      ...[12].map((number) => ({
         number,
         state: "closed",
         url: `https://github.com/example/openclaw-os/issues/${number}`
       })),
-      ...[6, 7, 8, 9, 10, 11, 14].map((number) => ({
+      ...[6, 7, 8, 9, 10, 11, 13, 14].map((number) => ({
         number,
         state: "open",
         url: `https://github.com/example/openclaw-os/issues/${number}`
@@ -77,9 +77,13 @@ function alphaEvidence() {
       {
         role: "release-owner",
         login: "maintainer",
-        approvedAt: "2026-08-16T11:30:00Z",
+        observedAt: "2026-08-16T11:30:00Z",
+        timestampSource: "protected-job-start",
         method: "protected-environment",
-        runUrl: "https://github.com/example/openclaw-os/actions/runs/3"
+        environment: "alpha-release",
+        runUrl: "https://github.com/example/openclaw-os/actions/runs/3",
+        jobId: 4,
+        runAttempt: 1
       }
     ],
     waivers: [],
@@ -186,12 +190,30 @@ test("mutable or undigested evidence is rejected", () => {
   assert.throws(() => validateEvidence(policy, evidence, now), /immutable GitHub/);
 });
 
-test("approval after evidence generation fails", () => {
+test("approval observation after evidence generation fails", () => {
   const evidence = alphaEvidence();
-  evidence.approvals[0].approvedAt = "2026-08-16T11:50:00Z";
+  evidence.approvals[0].observedAt = "2026-08-16T11:50:00Z";
   assert.throws(
     () => validateEvidence(policy, evidence, now),
-    /approval timestamp/
+    /approval observation/
+  );
+});
+
+test("approval without the alpha release environment fails", () => {
+  const evidence = alphaEvidence();
+  delete evidence.approvals[0].environment;
+  assert.throws(
+    () => validateEvidence(policy, evidence, now),
+    /protected GitHub environment/
+  );
+});
+
+test("approval inherited from a rerun fails", () => {
+  const evidence = alphaEvidence();
+  evidence.approvals[0].runAttempt = 2;
+  assert.throws(
+    () => validateEvidence(policy, evidence, now),
+    /protected GitHub environment/
   );
 });
 

@@ -43,6 +43,10 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
+          [[ "$GITHUB_RUN_ATTEMPT" == "1" ]] || {
+            echo 'publication reruns are forbidden because environment review history is run-scoped' >&2
+            exit 1
+          }
           [[ "$SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
           [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
           [[ "$VALIDATE_RUN_ID" =~ ^[0-9]+$ ]]
@@ -82,16 +86,37 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          environment="$RUNNER_TEMP/alpha-release-environment.json"
           gh api "repos/$GITHUB_REPOSITORY/environments/alpha-release" \
-            | jq -e '
+            >"$environment"
+          jq -e '
+                .can_admins_bypass == false
+                and .deployment_branch_policy.protected_branches == false
+                and .deployment_branch_policy.custom_branch_policies == true
+                and (
                 .protection_rules
                 | any(
                     .type == "required_reviewers"
                     and .prevent_self_review == true
                     and (.reviewers | length > 0)
                   )
+                )
+              ' "$environment" >/dev/null || {
+                echo 'alpha-release must require non-bypassable review and custom branch protection' >&2
+                exit 1
+              }
+          gh api "repos/$GITHUB_REPOSITORY/environments/alpha-release/deployment-branch-policies" \
+            | jq -e '
+                .total_count == 1
+                and (.branch_policies | length == 1)
+                and .branch_policies[0].name == "main"
               ' >/dev/null || {
-                echo 'alpha-release must require a reviewer and prevent self-review' >&2
+                echo 'alpha-release must allow deployments from main only' >&2
+                exit 1
+              }
+          gh api "repos/$GITHUB_REPOSITORY/immutable-releases" \
+            | jq -e '.enabled == true' >/dev/null || {
+                echo 'repository must enforce immutable releases' >&2
                 exit 1
               }
 
@@ -145,6 +170,71 @@ jobs:
               workflowRunHeadSha: .workflow_run.head_sha
             }' >"$RUNNER_TEMP/artifact.json"
 
+      - name: Resolve protected environment approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          WORKFLOW_ACTOR: ${{ github.actor }}
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          history="$RUNNER_TEMP/approval-history.json"
+          approval="$RUNNER_TEMP/release-approval.json"
+          jobs="$RUNNER_TEMP/publication-jobs.json"
+          job="$RUNNER_TEMP/publication-job.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" \
+            --paginate --slurp --jq '[.[].jobs[]]' >"$jobs"
+          jq -e \
+            --arg job_name "$GITHUB_JOB" \
+            --arg commit "$SOURCE_COMMIT" \
+            --argjson run_id "$GITHUB_RUN_ID" '
+              [
+                .[]
+                | select(
+                    .name == $job_name
+                    and .head_sha == $commit
+                    and .run_id == $run_id
+                    and (.id | type == "number")
+                    and (.started_at | type == "string" and length > 0)
+                  )
+                | {id, observedAt: .started_at}
+              ]
+              | if length == 1 then .[0] else error("publication job is missing or ambiguous") end
+            ' "$jobs" >"$job"
+          observed_at="$(jq -er '.observedAt' "$job")"
+          job_id="$(jq -er '.id' "$job")"
+          for attempt in 1 2 3 4 5 6; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" \
+              >"$history"
+            if jq -e \
+                --arg run_url "$WORKFLOW_RUN_URL" \
+                --arg actor "$WORKFLOW_ACTOR" \
+                --arg observed_at "$observed_at" \
+                --argjson job_id "$job_id" \
+                --argjson run_attempt "$GITHUB_RUN_ATTEMPT" \
+                -f scripts/resolve-release-approval.jq \
+                "$history" >"$approval"; then
+              break
+            fi
+            if [[ "$attempt" == 6 ]]; then
+              echo 'approved alpha-release review was not recorded' >&2
+              exit 1
+            fi
+            sleep 5
+          done
+          jq -e --arg actor "$WORKFLOW_ACTOR" --arg run_url "$WORKFLOW_RUN_URL" '
+            .role == "release-owner"
+            and .method == "protected-environment"
+            and .environment == "alpha-release"
+            and .runUrl == $run_url
+            and (.login | type == "string" and length > 0)
+            and .login != $actor
+            and (.observedAt | type == "string" and length > 0)
+            and .timestampSource == "protected-job-start"
+            and (.jobId | type == "number")
+            and .runAttempt == 1
+          ' "$approval" >/dev/null
+
       - name: Download the exact tested artifact
         env:
           GH_TOKEN: ${{ github.token }}
@@ -188,10 +278,28 @@ jobs:
             "$RUNNER_TEMP/validate-run.json" \
             "$RUNNER_TEMP/artifact.json" \
             "$RUNNER_TEMP/issues.json" \
+            "$RUNNER_TEMP/release-approval.json" \
             "$notes_json" \
             "$GITHUB_REPOSITORY" \
             "$generated_at" \
             "$WORKFLOW_RUN_URL"
+
+      - name: Create the immutable candidate tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/$TAG" \
+            -f sha="$SOURCE_COMMIT" \
+            >"$RUNNER_TEMP/release-tag.json"
+          jq -e --arg tag "refs/tags/$TAG" --arg commit "$SOURCE_COMMIT" '
+            .ref == $tag
+            and .object.type == "commit"
+            and .object.sha == $commit
+          ' "$RUNNER_TEMP/release-tag.json" >/dev/null
 
       - name: Create a draft release from the exact candidate
         env:
@@ -211,7 +319,7 @@ jobs:
           }
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --target "$SOURCE_COMMIT" \
+            --verify-tag \
             --title "OpenClaw OS ${version}" \
             --notes-file "$notes" \
             --draft \
@@ -236,15 +344,23 @@ jobs:
           set -euo pipefail
           version="$(cat VERSION)"
           prefix="openclaw-os-${version}-amd64"
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --json isDraft,isPrerelease,tagName,targetCommitish,url \
-            | jq -e --arg tag "$TAG" '
-                .isDraft == true
-                and .isPrerelease == true
-                and .tagName == $tag
-                and .targetCommitish == env.SOURCE_COMMIT
+          git fetch --no-tags origin main
+          [[ "$(git rev-parse origin/main)" == "$SOURCE_COMMIT" ]] || {
+            echo 'main changed before publication; refusing publication' >&2
+            exit 1
+          }
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" \
+            | jq -e --arg commit "$SOURCE_COMMIT" '
+                .object.type == "commit" and .object.sha == $commit
               ' >/dev/null
-          assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets)"
+          gh api "repos/$GITHUB_REPOSITORY/immutable-releases" \
+            | jq -e '.enabled == true' >/dev/null
+          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG")"
+          jq -e --arg tag "$TAG" '
+            .draft == true
+            and .prerelease == true
+            and .tag_name == $tag
+          ' <<<"$release" >/dev/null
           for name in \
             "${prefix}.iso" \
             "${prefix}.iso.sha256" \
@@ -257,14 +373,24 @@ jobs:
             "${prefix}.release-notes.json" \
             "${prefix}.release-evidence.json"; do
             local_size="$(stat -c '%s' "dist/$name")"
-            jq -e --arg name "$name" --argjson size "$local_size" \
-              '.assets | any(.name == $name and .size == $size)' \
-              <<<"$assets" >/dev/null
+            local_digest="sha256:$(sha256sum "dist/$name" | awk '{print $1}')"
+            jq -e \
+              --arg name "$name" \
+              --argjson size "$local_size" \
+              --arg digest "$local_digest" \
+              '.assets | any(
+                .name == $name
+                and .size == $size
+                and .digest == $digest
+              )' <<<"$release" >/dev/null
           done
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
             --draft=false --prerelease
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --json isDraft,isPrerelease,tagName \
+            --json isDraft,isImmutable,isPrerelease,tagName \
             | jq -e --arg tag "$TAG" '
-                .isDraft == false and .isPrerelease == true and .tagName == $tag
+                .isDraft == false
+                and .isImmutable == true
+                and .isPrerelease == true
+                and .tagName == $tag
               ' >/dev/null

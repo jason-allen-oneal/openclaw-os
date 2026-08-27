@@ -1,0 +1,285 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC1090,SC1091,SC2034
+set -Eeuo pipefail
+exec >/dev/ttyS0 2>&1
+
+case_id='@CASE_ID@'
+expected_machine='@MACHINE@'
+run_upgrade='@RUN_UPGRADE_PATH@'
+from_version='@UPGRADE_FROM_VERSION@'
+from_tarball='@UPGRADE_FROM_TARBALL@'
+from_integrity='@UPGRADE_FROM_INTEGRITY@'
+from_release_commit='@UPGRADE_FROM_RELEASE_COMMIT@'
+
+fail() {
+  printf 'OPENCLAW_OS_INSTALL_VERIFY_FAIL:case=%s reason=%s\n' "$case_id" "$1"
+  exit 1
+}
+
+expect_enabled() {
+  local unit="$1"
+  systemctl is-enabled "$unit" >/dev/null 2>&1 \
+    || fail "unit-not-enabled:${unit}"
+}
+
+assert_gateway_stopped() {
+  if systemctl is-active --quiet openclaw.service; then
+    fail 'gateway-started-before-onboarding'
+  fi
+}
+
+active_release_version() {
+  local resolved
+  resolved="$(readlink -f /opt/openclaw/current 2>/dev/null || true)"
+  [[ "$resolved" == /opt/openclaw/releases/* ]] || return 1
+  basename "$resolved"
+}
+
+assert_active_release() {
+  local expected="$1"
+  local active actual
+  active="$(active_release_version)" || fail "active-release-unresolved:${expected}"
+  [[ "$active" == "$expected" ]] || fail "active-release:${active}:expected:${expected}"
+  actual="$(
+    PATH=/opt/node/current/bin:/usr/bin:/bin \
+      /opt/openclaw/current/bin/openclaw --version 2>/dev/null | head -n 1
+  )"
+  [[ "$actual" == *"$expected"* ]] \
+    || fail "active-cli-version:${actual}:expected:${expected}"
+}
+
+assert_pending_release() {
+  local expected_version="$1"
+  local expected_tarball="$2"
+  local expected_integrity="$3"
+  local pending=/var/lib/openclaw/update-state/pending.json
+
+  [[ -f "$pending" && ! -L "$pending" ]] \
+    || fail "missing-pending-release:${expected_version}"
+  jq -e \
+    --arg version "$expected_version" \
+    --arg tarball "$expected_tarball" \
+    --arg integrity "$expected_integrity" \
+    '
+      .schemaVersion == 1
+      and .version == $version
+      and .tarball == $tarball
+      and .integrity == $integrity
+    ' "$pending" >/dev/null \
+    || fail "pending-release-mismatch:${expected_version}"
+}
+
+mark_upgrade_step() {
+  local step="$1"
+  printf 'OPENCLAW_OS_UPGRADE_STEP_OK case=%s step=%s active=%s\n' \
+    "$case_id" "$step" "$(active_release_version 2>/dev/null || printf unknown)"
+}
+
+[[ -r /usr/share/openclaw-os/release.env ]] || fail 'missing-release-env'
+source /usr/share/openclaw-os/release.env
+[[ "$OPENCLAW_OS_VERSION" == '@EXPECTED_OS_VERSION@' ]] \
+  || fail "os-version:${OPENCLAW_OS_VERSION}"
+[[ "$OPENCLAW_VERSION" == '@EXPECTED_OPENCLAW_VERSION@' ]] \
+  || fail "openclaw-pin:${OPENCLAW_VERSION}"
+[[ "$NODE_VERSION" == '@EXPECTED_NODE_VERSION@' ]] \
+  || fail "node-pin:${NODE_VERSION}"
+
+[[ -r /etc/os-release ]] || fail 'missing-os-release'
+source /etc/os-release
+[[ "$ID" == 'openclaw-os' ]] || fail "os-id:${ID}"
+[[ "$VERSION_ID" == '@EXPECTED_OS_VERSION@' ]] \
+  || fail "os-release-version:${VERSION_ID}"
+
+[[ -x /opt/node/current/bin/node ]] || fail 'missing-node'
+[[ -x /opt/openclaw/current/bin/openclaw ]] || fail 'missing-openclaw'
+actual_node="$(/opt/node/current/bin/node --version)"
+[[ "$actual_node" == 'v@EXPECTED_NODE_VERSION@' ]] \
+  || fail "node-version:${actual_node}"
+assert_active_release "$OPENCLAW_VERSION"
+
+for unit in \
+  NetworkManager.service \
+  nftables.service \
+  openclaw.service \
+  openclaw-hostd.service \
+  openclaw-controller.service \
+  openclaw-console.service \
+  openclaw-backup.timer \
+  openclaw-audit.timer; do
+  expect_enabled "$unit"
+done
+
+ssh_state="$(systemctl is-enabled ssh.service 2>/dev/null || true)"
+[[ "$ssh_state" == 'masked' ]] || fail "ssh-state:${ssh_state}"
+nft -c -f /etc/nftables.conf >/dev/null || fail 'invalid-firewall'
+[[ "$(stat -c '%U:%G:%a' /var/lib/openclaw/state)" == 'openclaw:openclaw:700' ]] \
+  || fail 'state-dir-mode'
+[[ -d /srv/openclaw/workspaces/main ]] || fail 'missing-main-workspace'
+[[ ! -e /var/lib/openclaw/state/openclaw.json ]] \
+  || fail 'onboarding-state-shipped'
+assert_gateway_stopped
+
+root_source="$(findmnt -n -o SOURCE /)"
+[[ "$root_source" == /dev/vda* ]] || fail "root-source:${root_source}"
+[[ -e /boot/grub/grub.cfg ]] || fail 'missing-grub-config'
+
+case '@FIRMWARE_MODE@' in
+  uefi)
+    [[ -d /sys/firmware/efi ]] || fail 'not-uefi-boot'
+    findmnt /boot/efi >/dev/null || fail 'efi-not-mounted'
+    if [[ ! -e /boot/efi/EFI/BOOT/BOOTX64.EFI \
+      && ! -e /boot/efi/EFI/debian/grubx64.efi ]]; then
+      fail 'missing-efi-loader'
+    fi
+    ;;
+  bios)
+    [[ ! -d /sys/firmware/efi ]] || fail 'unexpected-uefi-boot'
+    [[ -d /boot/grub/i386-pc ]] || fail 'missing-bios-grub'
+    ;;
+  *)
+    fail 'invalid-firmware-expectation'
+    ;;
+esac
+
+load_transaction_modules() {
+  OPENCLAW_APPLIANCE_LIBRARY_ONLY=1
+  source /usr/local/sbin/openclaw-appliance
+  unset OPENCLAW_APPLIANCE_LIBRARY_ONLY
+}
+
+assert_release_tuple() {
+  local version="$1"
+  local integrity="$2"
+  local expected_commit="${3:-}"
+
+  case "$version" in
+    "$from_version")
+      [[ "$integrity" == "$from_integrity" ]] \
+        || fail 'previous-release-integrity-mismatch'
+      [[ -z "$expected_commit" || "$expected_commit" == "$from_release_commit" ]] \
+        || fail 'previous-release-commit-mismatch'
+      ;;
+    "$OPENCLAW_VERSION")
+      [[ "$integrity" == "$OPENCLAW_NPM_INTEGRITY" ]] \
+        || fail 'candidate-release-integrity-mismatch'
+      [[ -z "$expected_commit" || "$expected_commit" == "$OPENCLAW_RELEASE_COMMIT" ]] \
+        || fail 'candidate-release-commit-mismatch'
+      ;;
+    *)
+      fail "unexpected-release-metadata:${version}"
+      ;;
+  esac
+}
+
+# The package identities are immutable inputs already pinned by the tested image
+# and matrix. Resolve them locally so the transaction test does not depend on
+# unauthenticated GitHub API quota or a moving npm metadata response. The actual
+# previous package tarball is still downloaded and checked against its SRI by the
+# production installer before npm installs it.
+resolve_npm_metadata() {
+  local spec="$1"
+  case "$spec" in
+    "$from_version")
+      RESOLVED_VERSION="$from_version"
+      RESOLVED_INTEGRITY="$from_integrity"
+      RESOLVED_TARBALL="$from_tarball"
+      RESOLVED_SIGNATURE_COUNT=1
+      ;;
+    "$OPENCLAW_VERSION")
+      RESOLVED_VERSION="$OPENCLAW_VERSION"
+      RESOLVED_INTEGRITY="$OPENCLAW_NPM_INTEGRITY"
+      RESOLVED_TARBALL="$OPENCLAW_TARBALL_URL"
+      RESOLVED_SIGNATURE_COUNT=1
+      ;;
+    *)
+      fail "unexpected-update-spec:${spec}"
+      ;;
+  esac
+  assert_release_tuple "$RESOLVED_VERSION" "$RESOLVED_INTEGRITY"
+}
+
+verify_openclaw_release_metadata() {
+  assert_release_tuple "$@"
+}
+
+upgrade_status=skipped
+case "$run_upgrade" in
+  true)
+    [[ "$from_version" =~ ^[0-9A-Za-z._+-]+$ ]] \
+      || fail 'invalid-upgrade-from-version'
+    [[ "$from_tarball" \
+      == "https://registry.npmjs.org/openclaw/-/openclaw-${from_version}.tgz" ]] \
+      || fail 'invalid-upgrade-from-tarball'
+    [[ "$from_integrity" =~ ^sha512-[A-Za-z0-9+/=]+$ ]] \
+      || fail 'invalid-upgrade-from-integrity'
+    [[ "$from_release_commit" =~ ^[a-f0-9]{40}$ ]] \
+      || fail 'invalid-upgrade-from-commit'
+    [[ "$from_version" != "$OPENCLAW_VERSION" ]] \
+      || fail 'upgrade-from-equals-candidate'
+
+    load_transaction_modules
+    verify_openclaw_release_metadata \
+      "$from_version" "$from_integrity" "$from_release_commit"
+    verify_openclaw_release_metadata \
+      "$OPENCLAW_VERSION" "$OPENCLAW_NPM_INTEGRITY" "$OPENCLAW_RELEASE_COMMIT"
+
+    command_update stage "$from_version" --allow-untested \
+      || fail 'upgrade-step:stage-previous'
+    mark_upgrade_step stage-previous
+    assert_pending_release "$from_version" "$from_tarball" "$from_integrity"
+
+    command_update apply --allow-untested \
+      || fail 'upgrade-step:activate-previous'
+    mark_upgrade_step activate-previous
+    assert_active_release "$from_version"
+    assert_gateway_stopped
+
+    command_update stage "$OPENCLAW_VERSION" \
+      || fail 'upgrade-step:stage-candidate'
+    mark_upgrade_step stage-candidate
+    assert_pending_release \
+      "$OPENCLAW_VERSION" "$OPENCLAW_TARBALL_URL" "$OPENCLAW_NPM_INTEGRITY"
+
+    command_update apply \
+      || fail 'upgrade-step:upgrade-candidate'
+    mark_upgrade_step upgrade-candidate
+    assert_active_release "$OPENCLAW_VERSION"
+    assert_gateway_stopped
+
+    command_rollback "$from_version" \
+      || fail 'upgrade-step:rollback-previous'
+    mark_upgrade_step rollback-previous
+    assert_active_release "$from_version"
+    assert_gateway_stopped
+
+    command_update stage "$OPENCLAW_VERSION" \
+      || fail 'upgrade-step:restage-candidate'
+    mark_upgrade_step restage-candidate
+    assert_pending_release \
+      "$OPENCLAW_VERSION" "$OPENCLAW_TARBALL_URL" "$OPENCLAW_NPM_INTEGRITY"
+
+    command_update apply \
+      || fail 'upgrade-step:reapply-candidate'
+    mark_upgrade_step reapply-candidate
+    assert_active_release "$OPENCLAW_VERSION"
+    assert_gateway_stopped
+
+    [[ ! -e /var/lib/openclaw/update-state/pending.json ]] \
+      || fail 'pending-update-remains-after-reapply'
+    upgrade_status=passed
+    ;;
+  false)
+    ;;
+  *)
+    fail 'invalid-upgrade-mode'
+    ;;
+esac
+
+printf 'OPENCLAW_OS_INSTALLED_BOOT_OK case=%s firmware=%s machine=%s os=%s openclaw=%s node=%s root=%s upgrade=%s from=%s final=%s\n' \
+  "$case_id" '@FIRMWARE_MODE@' "$expected_machine" \
+  "$OPENCLAW_OS_VERSION" "$OPENCLAW_VERSION" "$NODE_VERSION" \
+  "$root_source" "$upgrade_status" \
+  "${from_version:-none}" "$OPENCLAW_VERSION"
+sync
+sleep 2
+systemctl poweroff --no-block

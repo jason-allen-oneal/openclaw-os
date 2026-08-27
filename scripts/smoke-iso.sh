@@ -5,10 +5,9 @@ usage() {
   cat <<'USAGE'
 Usage: smoke-iso.sh <path-to-iso>
 
-Boots an OpenClaw OS ISO with OVMF/QEMU, captures the serial console, and
-waits for the OPENCLAW_OS_BOOT_OK marker. In CI, it also installs the ISO onto
-blank UEFI and BIOS disks and verifies each installed system after the ISO is
-detached. Set SMOKE_RUN_INSTALL_TESTS=false to disable the install phase.
+Boots an OpenClaw OS ISO with OVMF/QEMU, captures the serial console, and waits
+for the OPENCLAW_OS_BOOT_OK marker. In CI it then runs the matrix-driven
+installed-system gate. Set SMOKE_RUN_INSTALL_TESTS=false to disable that phase.
 Diagnostics are retained under SMOKE_DIAGNOSTICS_DIR, or dist/smoke-test by
 default.
 USAGE
@@ -29,11 +28,11 @@ done
 
 ISO_PATH="$(realpath "$ISO_PATH")"
 SMOKE_TIMEOUT_SECONDS="${SMOKE_TIMEOUT_SECONDS:-240}"
-if [[ ! "$SMOKE_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+[[ "$SMOKE_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || {
   printf 'SMOKE_TIMEOUT_SECONDS must be a positive integer, got: %s\n' \
     "$SMOKE_TIMEOUT_SECONDS" >&2
   exit 2
-fi
+}
 
 run_install_tests="${SMOKE_RUN_INSTALL_TESTS:-${CI:-false}}"
 case "$run_install_tests" in
@@ -48,11 +47,9 @@ esac
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 diagnostics_dir="${SMOKE_DIAGNOSTICS_DIR:-$repo_root/dist/smoke-test}"
-if [[ "$diagnostics_dir" != /* ]]; then
-  diagnostics_dir="$PWD/$diagnostics_dir"
-fi
-
+[[ "$diagnostics_dir" == /* ]] || diagnostics_dir="$PWD/$diagnostics_dir"
 mkdir -p "$diagnostics_dir"
+
 serial_log="$diagnostics_dir/serial.log"
 qemu_log="$diagnostics_dir/qemu.log"
 metadata_file="$diagnostics_dir/metadata.txt"
@@ -83,10 +80,10 @@ for pair in \
     break
   fi
 done
-if [[ -z "$ovmf_code" ]]; then
+[[ -n "$ovmf_code" ]] || {
   printf 'OVMF firmware was not found\n' >&2
   exit 1
-fi
+}
 
 scratch_dir="$(mktemp -d)"
 vars_copy="$scratch_dir/OVMF_VARS.fd"
@@ -170,23 +167,19 @@ fail_with_diagnostics() {
   print_log 'QEMU output' "$qemu_log"
 }
 
-run_blank_disk_tests() {
-  local firmware
+run_installed_system_tests() {
   if [[ "$run_install_tests" != "true" ]]; then
     return 0
   fi
 
-  [[ -x "$repo_root/scripts/install-iso-vm.sh" ]] || {
-    printf 'Missing executable installer test harness: %s\n' \
-      "$repo_root/scripts/install-iso-vm.sh" >&2
+  local runner="$repo_root/scripts/installed-system-test.sh"
+  [[ -x "$runner" ]] || {
+    printf 'Missing executable installed-system runner: %s\n' "$runner" >&2
     return 1
   }
 
-  for firmware in uefi bios; do
-    printf 'Running blank-disk %s installation test...\n' "$firmware"
-    INSTALL_TEST_DIAGNOSTICS_DIR="$diagnostics_dir/install-$firmware" \
-      "$repo_root/scripts/install-iso-vm.sh" "$ISO_PATH" "$firmware"
-  done
+  INSTALLED_SYSTEM_DIAGNOSTICS_DIR="$diagnostics_dir/installed-system" \
+    "$runner" "$ISO_PATH"
 }
 
 pass_live_boot() {
@@ -194,9 +187,9 @@ pass_live_boot() {
   printf 'terminated-after-marker\n' >"$exit_status_file"
   stop_qemu
   printf 'UEFI live-boot smoke test passed.\n'
-  run_blank_disk_tests
+  run_installed_system_tests
   if [[ "$run_install_tests" == "true" ]]; then
-    printf 'UEFI and BIOS blank-disk installation tests passed.\n'
+    printf 'Matrix-driven installed-system tests passed.\n'
   fi
 }
 

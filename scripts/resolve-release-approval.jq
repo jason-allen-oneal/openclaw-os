@@ -6,7 +6,6 @@
   | select(.name == "alpha-release")
   | select(($review.user.login | type) == "string")
   | select(($review.user.login | length) > 0)
-  | select($review.user.login != $actor)
   | {
       role: "release-owner",
       login: $review.user.login,

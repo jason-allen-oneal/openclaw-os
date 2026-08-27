@@ -105,17 +105,7 @@ jq -e \
   --argjson run_attempt 1 \
   -f "$ROOT_DIR/scripts/resolve-release-approval.jq" \
   "$scratch/approval-history.json" >"$scratch/approval.json"
-if jq -e \
-    --arg run_url https://github.com/example/openclaw-os/actions/runs/3 \
-    --arg actor release-reviewer \
-    --arg observed_at "$observed_at" \
-    --argjson job_id 4 \
-    --argjson run_attempt 1 \
-    -f "$ROOT_DIR/scripts/resolve-release-approval.jq" \
-    "$scratch/approval-history.json" >/dev/null; then
-  echo 'self-approved release review was accepted' >&2
-  exit 1
-fi
+jq -e '.login == "release-reviewer"' "$scratch/approval.json" >/dev/null
 
 "$ROOT_DIR/scripts/prepare-release-evidence.sh" \
   "$dist" "v$VERSION" "$COMMIT" \

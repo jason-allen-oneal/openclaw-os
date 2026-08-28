@@ -222,7 +222,7 @@ grep -q 'deployment-branch-policies' "$publish_workflow" || fail "alpha publicat
 grep -q 'immutable-releases' "$publish_workflow" || fail "alpha publication must require immutable releases"
 grep -q 'git/refs' "$publish_workflow" || fail "alpha publication must create the candidate tag atomically"
 grep -q -- '--verify-tag' "$publish_workflow" || fail "alpha publication must require the pre-created tag"
-grep -Fq '.digest == $digest' "$publish_workflow" || fail "alpha publication must verify remote asset digests"
+grep -Fq ".digest == \$digest" "$publish_workflow" || fail "alpha publication must verify remote asset digests"
 grep -q '/approvals' "$publish_workflow" || fail "alpha publication must resolve GitHub approval history"
 
 note "checking GitHub Actions pins"

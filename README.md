@@ -10,8 +10,13 @@ updates, rollback, and recovery.
 
 ## Current status
 
-Version `0.1.0` is a technical alpha for amd64 virtual machines and lab systems.
+Version `0.1.0-alpha.1` is a technical alpha for amd64 virtual machines and lab systems.
 It is not yet a stable production appliance.
+
+The alpha is intentionally unsigned and has no trusted first-party OpenClaw OS
+update feed. Verify its GitHub Release assets using the attached SHA-256 files
+and release-evidence record. Production signing, broad compatibility claims,
+and supported update channels remain later promotion gates.
 
 Implemented today:
 
@@ -47,7 +52,7 @@ Still required before a stable release:
 
 | Component | Version |
 | --- | --- |
-| OpenClaw OS | 0.1.0 |
+| OpenClaw OS | 0.1.0-alpha.1 |
 | Debian | 13 `trixie` |
 | Node.js | 24.15.0 LTS |
 | OpenClaw | 2026.6.34 extended-stable |
@@ -137,13 +142,13 @@ make install-smoke
 Generated release files include:
 
 ```text
-dist/openclaw-os-0.1.0-amd64.iso
-dist/openclaw-os-0.1.0-amd64.iso.sha256
-dist/openclaw-os-0.1.0-amd64.sbom.spdx.json
-dist/openclaw-os-0.1.0-amd64.sbom.spdx.json.sha256
-dist/openclaw-os-0.1.0-amd64.build.json
-dist/openclaw-os-0.1.0-amd64.installed-system-evidence.build.json
-dist/openclaw-os-0.1.0-amd64.installed-system-checksum.build.json
+dist/openclaw-os-0.1.0-alpha.1-amd64.iso
+dist/openclaw-os-0.1.0-alpha.1-amd64.iso.sha256
+dist/openclaw-os-0.1.0-alpha.1-amd64.sbom.spdx.json
+dist/openclaw-os-0.1.0-alpha.1-amd64.sbom.spdx.json.sha256
+dist/openclaw-os-0.1.0-alpha.1-amd64.build.json
+dist/openclaw-os-0.1.0-alpha.1-amd64.installed-system-evidence.build.json
+dist/openclaw-os-0.1.0-alpha.1-amd64.installed-system-checksum.build.json
 ```
 
 The verified GitHub Actions artifact is uploaded only after these gates pass:

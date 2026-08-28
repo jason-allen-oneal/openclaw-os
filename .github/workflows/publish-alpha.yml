@@ -1,0 +1,395 @@
+name: Publish alpha
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact successful main commit to publish
+        required: true
+        type: string
+      build_run_id:
+        description: Successful Build ISO run containing the exact candidate artifact
+        required: true
+        type: string
+      validate_run_id:
+        description: Successful Validate run for the same commit
+        required: true
+        type: string
+      tag:
+        description: Alpha tag; must equal v plus VERSION
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+  issues: read
+
+concurrency:
+  group: publish-alpha
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: alpha-release
+    steps:
+      - name: Validate requested identities
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          VALIDATE_RUN_ID: ${{ inputs.validate_run_id }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_RUN_ATTEMPT" == "1" ]] || {
+            echo 'publication reruns are forbidden because environment review history is run-scoped' >&2
+            exit 1
+          }
+          [[ "$SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$VALIDATE_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$ ]]
+
+      - name: Check out the exact candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 0
+
+      - name: Require current protected main and unused release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_COMMIT" ]]
+          [[ "$(git rev-parse origin/main)" == "$SOURCE_COMMIT" ]] || {
+            echo 'source_commit is no longer current main' >&2
+            exit 1
+          }
+          [[ "$TAG" == "v$(cat VERSION)" ]]
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "tag already exists: $TAG" >&2
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release already exists: $TAG" >&2
+            exit 1
+          fi
+
+      - name: Require protected release-owner approval policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          environment="$RUNNER_TEMP/alpha-release-environment.json"
+          gh api "repos/$GITHUB_REPOSITORY/environments/alpha-release" \
+            >"$environment"
+          jq -e '
+                .can_admins_bypass == false
+                and .deployment_branch_policy.protected_branches == false
+                and .deployment_branch_policy.custom_branch_policies == true
+                and (
+                .protection_rules
+                | any(
+                    .type == "required_reviewers"
+                    and .prevent_self_review == false
+                    and (.reviewers | length > 0)
+                  )
+                )
+              ' "$environment" >/dev/null || {
+                echo 'alpha-release must require non-bypassable review and custom branch protection' >&2
+                exit 1
+              }
+          gh api "repos/$GITHUB_REPOSITORY/environments/alpha-release/deployment-branch-policies" \
+            | jq -e '
+                .total_count == 1
+                and (.branch_policies | length == 1)
+                and .branch_policies[0].name == "main"
+              ' >/dev/null || {
+                echo 'alpha-release must allow deployments from main only' >&2
+                exit 1
+              }
+          gh api "repos/$GITHUB_REPOSITORY/immutable-releases" \
+            | jq -e '.enabled == true' >/dev/null || {
+                echo 'repository must enforce immutable releases' >&2
+                exit 1
+              }
+
+      - name: Resolve successful immutable workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          VALIDATE_RUN_ID: ${{ inputs.validate_run_id }}
+        run: |
+          set -euo pipefail
+          for spec in "build:$BUILD_RUN_ID" "validate:$VALIDATE_RUN_ID"; do
+            kind="${spec%%:*}"
+            run_id="${spec#*:}"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" \
+              --jq '{
+                conclusion,
+                event,
+                headBranch: .head_branch,
+                headSha: .head_sha,
+                url: .html_url,
+                workflowName: .name,
+                workflowPath: .path,
+                runAttempt: .run_attempt,
+                repository: .repository.full_name,
+                createdAt: .created_at,
+                updatedAt: .updated_at
+              }' >"$RUNNER_TEMP/${kind}-run.json"
+          done
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID/jobs" \
+            --paginate --slurp \
+            --jq '[.[].jobs[] | {
+              name,
+              conclusion,
+              steps: [.steps[] | {name, conclusion}]
+            }]' >"$RUNNER_TEMP/build-jobs.json"
+          jq --slurpfile jobs "$RUNNER_TEMP/build-jobs.json" \
+            '. + {jobs: $jobs[0]}' \
+            "$RUNNER_TEMP/build-run.json" \
+            >"$RUNNER_TEMP/build-run.with-jobs.json"
+          mv "$RUNNER_TEMP/build-run.with-jobs.json" "$RUNNER_TEMP/build-run.json"
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID/artifacts" \
+            --jq '[.artifacts[] | select(.name == "openclaw-os-amd64")] | if length == 1 then .[0] else error("candidate artifact is missing or ambiguous") end | {
+              id,
+              name,
+              expired,
+              sizeInBytes: .size_in_bytes,
+              archiveDigest: .digest,
+              createdAt: .created_at,
+              workflowRunHeadSha: .workflow_run.head_sha
+            }' >"$RUNNER_TEMP/artifact.json"
+
+      - name: Resolve protected environment approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          WORKFLOW_ACTOR: ${{ github.actor }}
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          history="$RUNNER_TEMP/approval-history.json"
+          approval="$RUNNER_TEMP/release-approval.json"
+          jobs="$RUNNER_TEMP/publication-jobs.json"
+          job="$RUNNER_TEMP/publication-job.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" \
+            --paginate --slurp --jq '[.[].jobs[]]' >"$jobs"
+          jq -e \
+            --arg job_name "$GITHUB_JOB" \
+            --arg commit "$SOURCE_COMMIT" \
+            --argjson run_id "$GITHUB_RUN_ID" '
+              [
+                .[]
+                | select(
+                    .name == $job_name
+                    and .head_sha == $commit
+                    and .run_id == $run_id
+                    and (.id | type == "number")
+                    and (.started_at | type == "string" and length > 0)
+                  )
+                | {id, observedAt: .started_at}
+              ]
+              | if length == 1 then .[0] else error("publication job is missing or ambiguous") end
+            ' "$jobs" >"$job"
+          observed_at="$(jq -er '.observedAt' "$job")"
+          job_id="$(jq -er '.id' "$job")"
+          for attempt in 1 2 3 4 5 6; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" \
+              >"$history"
+            if jq -e \
+                --arg run_url "$WORKFLOW_RUN_URL" \
+                --arg actor "$WORKFLOW_ACTOR" \
+                --arg observed_at "$observed_at" \
+                --argjson job_id "$job_id" \
+                --argjson run_attempt "$GITHUB_RUN_ATTEMPT" \
+                -f scripts/resolve-release-approval.jq \
+                "$history" >"$approval"; then
+              break
+            fi
+            if [[ "$attempt" == 6 ]]; then
+              echo 'approved alpha-release review was not recorded' >&2
+              exit 1
+            fi
+            sleep 5
+          done
+          jq -e --arg actor "$WORKFLOW_ACTOR" --arg run_url "$WORKFLOW_RUN_URL" '
+            .role == "release-owner"
+            and .method == "protected-environment"
+            and .environment == "alpha-release"
+            and .runUrl == $run_url
+            and (.login | type == "string" and length > 0)
+            and (.observedAt | type == "string" and length > 0)
+            and .timestampSource == "protected-job-start"
+            and (.jobId | type == "number")
+            and .runAttempt == 1
+          ' "$approval" >/dev/null
+
+      - name: Download the exact tested artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name openclaw-os-amd64 \
+            --dir dist
+
+      - name: Snapshot release blockers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          : >"$RUNNER_TEMP/issues.jsonl"
+          for issue in 6 7 8 9 10 11 12 13 14; do
+            gh issue view "$issue" --repo "$GITHUB_REPOSITORY" \
+              --json number,state,url \
+              --jq '{number, state: (.state | ascii_downcase), url}' \
+              >>"$RUNNER_TEMP/issues.jsonl"
+          done
+          jq -s 'sort_by(.number)' "$RUNNER_TEMP/issues.jsonl" \
+            >"$RUNNER_TEMP/issues.json"
+
+      - name: Bind and validate release evidence
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          TAG: ${{ inputs.tag }}
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          version="$(cat VERSION)"
+          notes_json="docs/releases/${version}.json"
+          test -f "$notes_json"
+          generated_at="$(date --utc +%Y-%m-%dT%H:%M:%SZ)"
+          ./scripts/prepare-release-evidence.sh \
+            dist "$TAG" "$SOURCE_COMMIT" \
+            "$RUNNER_TEMP/build-run.json" \
+            "$RUNNER_TEMP/validate-run.json" \
+            "$RUNNER_TEMP/artifact.json" \
+            "$RUNNER_TEMP/issues.json" \
+            "$RUNNER_TEMP/release-approval.json" \
+            "$notes_json" \
+            "$GITHUB_REPOSITORY" \
+            "$generated_at" \
+            "$WORKFLOW_RUN_URL"
+
+      - name: Create the immutable candidate tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/$TAG" \
+            -f sha="$SOURCE_COMMIT" \
+            >"$RUNNER_TEMP/release-tag.json"
+          jq -e --arg tag "refs/tags/$TAG" --arg commit "$SOURCE_COMMIT" '
+            .ref == $tag
+            and .object.type == "commit"
+            and .object.sha == $commit
+          ' "$RUNNER_TEMP/release-tag.json" >/dev/null
+
+      - name: Create a draft release from the exact candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version="$(cat VERSION)"
+          prefix="openclaw-os-${version}-amd64"
+          notes="docs/releases/${version}.md"
+          test -f "$notes"
+          git fetch --no-tags origin main
+          [[ "$(git rev-parse origin/main)" == "$SOURCE_COMMIT" ]] || {
+            echo 'main changed after candidate verification; refusing publication' >&2
+            exit 1
+          }
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "OpenClaw OS ${version}" \
+            --notes-file "$notes" \
+            --draft \
+            --prerelease \
+            "dist/${prefix}.iso" \
+            "dist/${prefix}.iso.sha256" \
+            "dist/${prefix}.sbom.spdx.json" \
+            "dist/${prefix}.sbom.spdx.json.sha256" \
+            "dist/${prefix}.build.json" \
+            "dist/${prefix}.build-run.json" \
+            "dist/${prefix}.installed-system-evidence.build.json" \
+            "dist/${prefix}.installed-system-checksum.build.json" \
+            "dist/${prefix}.release-notes.json" \
+            "dist/${prefix}.release-evidence.json"
+
+      - name: Verify the draft and publish it as a prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version="$(cat VERSION)"
+          prefix="openclaw-os-${version}-amd64"
+          git fetch --no-tags origin main
+          [[ "$(git rev-parse origin/main)" == "$SOURCE_COMMIT" ]] || {
+            echo 'main changed before publication; refusing publication' >&2
+            exit 1
+          }
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" \
+            | jq -e --arg commit "$SOURCE_COMMIT" '
+                .object.type == "commit" and .object.sha == $commit
+              ' >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/immutable-releases" \
+            | jq -e '.enabled == true' >/dev/null
+          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG")"
+          jq -e --arg tag "$TAG" '
+            .draft == true
+            and .prerelease == true
+            and .tag_name == $tag
+          ' <<<"$release" >/dev/null
+          for name in \
+            "${prefix}.iso" \
+            "${prefix}.iso.sha256" \
+            "${prefix}.sbom.spdx.json" \
+            "${prefix}.sbom.spdx.json.sha256" \
+            "${prefix}.build.json" \
+            "${prefix}.build-run.json" \
+            "${prefix}.installed-system-evidence.build.json" \
+            "${prefix}.installed-system-checksum.build.json" \
+            "${prefix}.release-notes.json" \
+            "${prefix}.release-evidence.json"; do
+            local_size="$(stat -c '%s' "dist/$name")"
+            local_digest="sha256:$(sha256sum "dist/$name" | awk '{print $1}')"
+            jq -e \
+              --arg name "$name" \
+              --argjson size "$local_size" \
+              --arg digest "$local_digest" \
+              '.assets | any(
+                .name == $name
+                and .size == $size
+                and .digest == $digest
+              )' <<<"$release" >/dev/null
+          done
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --draft=false --prerelease
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isImmutable,isPrerelease,tagName \
+            | jq -e --arg tag "$TAG" '
+                .isDraft == false
+                and .isImmutable == true
+                and .isPrerelease == true
+                and .tagName == $tag
+              ' >/dev/null

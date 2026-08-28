@@ -1,0 +1,23 @@
+{
+  "knownLimitations": [
+    "Technical alpha for disposable virtual machines and lab systems; not a production appliance.",
+    "amd64 only; no Secure Boot signing, measured boot, or automated full-disk encryption.",
+    "No production OpenClaw OS update-signing trust root or first-party OS update feed.",
+    "No transactional Debian base-OS rollback and no physical-hardware support claim.",
+    "OpenClaw code rollback does not automatically restore migrated application state."
+  ],
+  "testedHardware": [
+    "QEMU q35 with OVMF UEFI",
+    "QEMU pc with legacy BIOS"
+  ],
+  "supportedUpgradePaths": [
+    "Fresh installation only; there is no supported prior OpenClaw OS release to upgrade from.",
+    "The installed-system gate exercises pinned OpenClaw application stage, apply, rollback, and reapply transactions."
+  ],
+  "checksums": "SHA-256 checksum assets are attached to the GitHub prerelease and bound in the release-evidence document.",
+  "sbom": "SPDX 2.3 SBOM attached; it inventories Debian packages, Node.js, the control plane, OpenClaw, and installed production npm dependencies.",
+  "signingIdentities": [
+    "Unsigned lab alpha published through the repository's GitHub Actions workflow; verify the attached SHA-256 checksums and release evidence."
+  ],
+  "rollbackProcedure": "OpenClaw application rollback is documented in docs/UPDATES.md. Reinstall the appliance for base-OS recovery in this alpha."
+}

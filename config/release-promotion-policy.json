@@ -19,12 +19,11 @@
         "sbom",
         "uefi-live-boot",
         "clean-install",
-        "compatibility-manifest",
         "update-code-rollback",
         "known-limitations"
       ],
-      "requiredClosedIssues": [6, 7, 8, 12, 13],
-      "allowedOpenBlockers": [9, 10, 11, 14],
+      "requiredClosedIssues": [12],
+      "allowedOpenBlockers": [6, 7, 8, 9, 10, 11, 13, 14],
       "requiredApprovalRoles": ["release-owner"]
     },
     "beta": {
@@ -37,7 +36,7 @@
         "security-review",
         "supported-hardware"
       ],
-      "requiredClosedIssues": [9, 10, 14],
+      "requiredClosedIssues": [9, 10, 13, 14],
       "allowedOpenBlockers": [11],
       "requiredApprovalRoles": ["release-owner", "security-reviewer"]
     },

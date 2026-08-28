@@ -3,7 +3,7 @@ ROOT := $(CURDIR)
 VERSION := $(shell cat VERSION)
 ARCH ?= amd64
 
-.PHONY: validate verify-artifacts test test-control-plane test-release-gate test-branch-cleanup test-iso-change-filter test-repository-settings test-install-vm release-policy sync-repo-metadata apply-repo-settings iso smoke installed-system install-smoke clean run tree
+.PHONY: validate verify-artifacts test test-control-plane test-release-gate test-release-evidence test-branch-cleanup test-iso-change-filter test-repository-settings test-install-vm release-policy sync-repo-metadata apply-repo-settings iso smoke installed-system install-smoke clean run tree
 
 validate:
 	./scripts/validate.sh
@@ -21,6 +21,7 @@ test:
 	./tests/install-vm-test.sh
 	./scripts/test-control-plane.sh
 	node --test tests/release-gate.test.mjs
+	./tests/release-evidence-test.sh
 	python3 -m unittest discover -s tests -p 'branch_cleanup_test.py'
 
 test-control-plane:
@@ -28,6 +29,9 @@ test-control-plane:
 
 test-release-gate:
 	node --test tests/release-gate.test.mjs
+
+test-release-evidence:
+	./tests/release-evidence-test.sh
 
 test-branch-cleanup:
 	python3 -m unittest discover -s tests -p 'branch_cleanup_test.py'

@@ -48,12 +48,12 @@ resolve_npm_metadata() { :; }
 source "$ROOT_DIR/image/config/includes.chroot/usr/libexec/openclaw-appliance/commands/releases.sh"
 
 cat >"$RELEASE_ENV_FILE" <<'ENV'
-OPENCLAW_OS_VERSION=0.1.0
+OPENCLAW_OS_VERSION=0.1.0-alpha.1
 ENV
 cat >"$OPENCLAW_COMPATIBILITY_FILE" <<'JSON'
 {
   "schemaVersion": 1,
-  "openclawOsVersion": "0.1.0",
+  "openclawOsVersion": "0.1.0-alpha.1",
   "testedOpenclawVersions": ["2026.6.34", "2026.7.1"]
 }
 JSON
@@ -93,7 +93,7 @@ mkdir -p "$OPENCLAW_UPDATE_STATE_DIR" "$OPENCLAW_RELEASES_DIR/2026.7.1/bin"
 cat >"$OPENCLAW_PENDING_UPDATE_FILE" <<'JSON'
 {
   "schemaVersion": 1,
-  "openclawOsVersion": "0.1.0",
+  "openclawOsVersion": "0.1.0-alpha.1",
   "version": "2026.7.1",
   "integrity": "sha512-VGVzdA==",
   "tarball": "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz",
